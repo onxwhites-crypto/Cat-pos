@@ -161,7 +161,6 @@ const [editItems, setEditItems] = useState<{
     original_price: i.original_price,
     item_cost: i.item_cost,
     unit_cost: i.unit_cost,
-    service_fee_share: i.service_fee_share || 0,
   })))
   setShowEdit(true)
 }
