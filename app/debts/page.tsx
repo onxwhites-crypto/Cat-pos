@@ -3,15 +3,11 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
-type Installment = {
+type DebtCategory = {
   id: string
-  debt_id: string
-  installment_no: number
-  amount: number
-  due_date: string | null
-  paid: boolean
-  paid_at: string | null
-  note: string
+  name: string
+  due_day: number | null
+  billing_start_day: number | null
 }
 
 type Debt = {
@@ -19,159 +15,161 @@ type Debt = {
   name: string
   amount: number
   paid_amount: number
-  due_date: string | null
   category: string
-  status: string
-  note: string
+  debt_category_id: string | null
   has_installments: boolean
   total_installments: number | null
-  created_at: string
-  debt_installments: Installment[]
+  due_date: string | null
+  note: string | null
+  debt_installments: {
+    id: string
+    installment_no: number
+    amount: number
+    due_date: string | null
+    paid: boolean
+    paid_at: string | null
+  }[]
 }
-
-const DEBT_CATEGORIES = [
-  'ค่าสินค้า',
-  'SPaylater',
-  'ผ่อนสินค้า',
-  'ค่าเช่า',
-  'ค่าโทรศัพท์',
-  'ค่าน้ำ-ไฟ',
-  'เงินกู้',
-  'อื่นๆ',
-]
 
 export default function DebtsPage() {
   const router = useRouter()
+  const [debtCategories, setDebtCategories] = useState<DebtCategory[]>([])
   const [debts, setDebts] = useState<Debt[]>([])
-  const [filter, setFilter] = useState<'all' | 'unpaid' | 'partial' | 'paid'>('unpaid')
+  const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
-  const [editingDebt, setEditingDebt] = useState<Debt | null>(null)
-  const [showDetail, setShowDetail] = useState<Debt | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // Form
-  const [form, setForm] = useState({
-    name: '',
-    amount: '',
-    paid_amount: '0',
-    due_date: '',
-    category: 'ค่าสินค้า',
-    note: '',
-    has_installments: false,
-    total_installments: '5',
-    installments: [] as { amount: string; due_date: string }[],
-  })
+const [form, setForm] = useState({
+  name: '',
+  amount: '',
+  debt_category_id: '',
+  has_installments: false,
+  total_installments: '5',
+  installment_amount: '',
+  last_installment_amount: '',
+  start_date: new Date().toISOString().split('T')[0],
+  note: '',
+  due_date: '',
+  paid_amount: '0',
+})
+
+  const today = new Date()
+  const currentMonth = today.getMonth()
+  const currentYear = today.getFullYear()
 
   useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
-    const { data } = await supabase
-      .from('debts')
-      .select('*, debt_installments(*)')
-      .order('created_at', { ascending: false })
-    setDebts(data || [])
+    setLoading(true)
+    const [{ data: cats }, { data: d }] = await Promise.all([
+      supabase.from('debt_categories').select('*').order('name'),
+      supabase.from('debts').select('*, debt_installments(*)').order('created_at', { ascending: false }),
+    ])
+    setDebtCategories(cats || [])
+    setDebts(d || [])
+    setLoading(false)
   }
 
-  function calcStatus(d: Debt): 'paid' | 'partial' | 'unpaid' {
-    const paid = d.has_installments
-      ? d.debt_installments.filter(i => i.paid).reduce((s, i) => s + i.amount, 0)
-      : d.paid_amount
-    if (paid >= d.amount) return 'paid'
-    if (paid > 0) return 'partial'
+  // หาว่าเดือนนี้มีงวดต้องจ่ายไหม และจ่ายแล้วหรือยัง
+  function getCurrentMonthInstallment(debt: Debt) {
+    if (!debt.has_installments) return null
+    return debt.debt_installments.find(i => {
+      if (!i.due_date) return false
+      const d = new Date(i.due_date)
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear
+    }) || null
+  }
+
+  // ยอดรวมที่ต้องจ่ายเดือนนี้ของ category นี้
+  function getCategoryMonthlyAmount(categoryId: string) {
+    return debts
+      .filter(d => d.debt_category_id === categoryId)
+      .reduce((sum, debt) => {
+        const inst = getCurrentMonthInstallment(debt)
+        if (inst) return sum + inst.amount
+        if (!debt.has_installments) {
+          const remaining = debt.amount - debt.paid_amount
+          return sum + remaining
+        }
+        return sum
+      }, 0)
+  }
+
+  // สถานะรวมของ category เดือนนี้
+  function getCategoryStatus(categoryId: string) {
+    const categoryDebts = debts.filter(d => d.debt_category_id === categoryId)
+    if (categoryDebts.length === 0) return null
+
+    const thisMonthInsts = categoryDebts
+      .map(d => getCurrentMonthInstallment(d))
+      .filter(Boolean)
+
+    if (thisMonthInsts.length === 0) return 'no_installment'
+    if (thisMonthInsts.every(i => i?.paid)) return 'paid'
+    if (thisMonthInsts.some(i => i?.paid)) return 'partial'
     return 'unpaid'
   }
 
-  function getPaidAmount(d: Debt): number {
-    if (d.has_installments) {
-      return d.debt_installments.filter(i => i.paid).reduce((s, i) => s + i.amount, 0)
-    }
-    return d.paid_amount
+  function getMonthName(date: Date) {
+    return date.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' })
   }
 
-  const filteredDebts = debts.filter(d => {
-    if (filter === 'all') return true
-    return calcStatus(d) === filter
+  function getBillingPeriod(cat: DebtCategory) {
+    const startDay = cat.billing_start_day || 1
+    const month = getMonthName(today)
+    return `${startDay} - ${new Date(currentYear, currentMonth + 1, 0).getDate()} ${month}`
+  }
+
+async function generateInstallments(debtId: string) {
+  const startDate = new Date(form.start_date)
+  const count = Number(form.total_installments)
+  const amount = Number(form.installment_amount)
+  const lastAmount = Number(form.last_installment_amount) || amount
+  if (!count || !amount) return
+
+  const installments = Array.from({ length: count }, (_, i) => {
+    const dueDate = new Date(startDate)
+    dueDate.setMonth(dueDate.getMonth() + i)
+    return {
+      debt_id: debtId,
+      installment_no: i + 1,
+      amount: i === count - 1 ? lastAmount : amount,
+      due_date: dueDate.toISOString().split('T')[0],
+      paid: false,
+    }
   })
 
-  function openAdd() {
-    setForm({
-      name: '', amount: '', paid_amount: '0', due_date: '',
-      category: 'ค่าสินค้า', note: '',
-      has_installments: false, total_installments: '5', installments: [],
-    })
-    setEditingDebt(null)
-    setShowAdd(true)
-  }
-
-  function generateInstallments() {
-    const total = Number(form.amount)
-    const count = Number(form.total_installments)
-    if (!total || !count || count <= 0) return
-
-    const perInstallment = Math.floor((total / count) * 100) / 100
-    const lastInstallment = total - (perInstallment * (count - 1))
-
-    const newInstallments = Array.from({ length: count }, (_, i) => ({
-      amount: (i === count - 1 ? lastInstallment : perInstallment).toFixed(2),
-      due_date: '',
-    }))
-    setForm({ ...form, installments: newInstallments })
-  }
-
-  function updateInstallment(index: number, field: 'amount' | 'due_date', value: string) {
-    const updated = [...form.installments]
-    updated[index] = { ...updated[index], [field]: value }
-    setForm({ ...form, installments: updated })
-  }
+  await supabase.from('debt_installments').insert(installments)
+}
 
   async function handleSave() {
     if (!form.name || !form.amount) return
     setSaving(true)
     try {
-      const status = form.has_installments ? 'unpaid' : (
-        Number(form.paid_amount) >= Number(form.amount) ? 'paid' :
-        Number(form.paid_amount) > 0 ? 'partial' : 'unpaid'
-      )
-
-      const debtData = {
+      const { data: debt } = await supabase.from('debts').insert({
         name: form.name,
         amount: Number(form.amount),
         paid_amount: form.has_installments ? 0 : Number(form.paid_amount),
-        due_date: form.due_date || null,
-        category: form.category,
-        note: form.note || null,
-        status,
+        debt_category_id: form.debt_category_id || null,
+        category: debtCategories.find(c => c.id === form.debt_category_id)?.name || '',
         has_installments: form.has_installments,
         total_installments: form.has_installments ? Number(form.total_installments) : null,
-      }
+        due_date: form.due_date || null,
+        note: form.note || null,
+        status: 'unpaid',
+      }).select().single()
 
-      let debtId: string
-      if (editingDebt) {
-        await supabase.from('debts').update(debtData).eq('id', editingDebt.id)
-        debtId = editingDebt.id
-        // ลบงวดเก่า ถ้าเป็นแบบงวด
-        if (form.has_installments) {
-          await supabase.from('debt_installments').delete().eq('debt_id', debtId)
-        }
-      } else {
-        const { data } = await supabase.from('debts').insert(debtData).select().single()
-        debtId = data!.id
-      }
-
-      // เพิ่มงวด
-      if (form.has_installments && form.installments.length > 0) {
-        await supabase.from('debt_installments').insert(
-          form.installments.map((inst, i) => ({
-            debt_id: debtId,
-            installment_no: i + 1,
-            amount: Number(inst.amount),
-            due_date: inst.due_date || null,
-            paid: false,
-          }))
-        )
+      if (debt && form.has_installments) {
+        await generateInstallments(debt.id)
       }
 
       setShowAdd(false)
+setForm({
+  name: '', amount: '', debt_category_id: '', has_installments: false,
+  total_installments: '5', installment_amount: '', last_installment_amount: '',
+  start_date: new Date().toISOString().split('T')[0],
+  note: '', due_date: '', paid_amount: '0',
+})
       fetchData()
     } catch (e) {
       alert('เกิดข้อผิดพลาดค่ะ')
@@ -179,49 +177,9 @@ export default function DebtsPage() {
     setSaving(false)
   }
 
-  async function toggleInstallmentPaid(inst: Installment) {
-    const newPaid = !inst.paid
-    await supabase.from('debt_installments').update({
-      paid: newPaid,
-      paid_at: newPaid ? new Date().toISOString() : null,
-    }).eq('id', inst.id)
-
-    // อัพเดท status ของ debt
-    const debt = debts.find(d => d.id === inst.debt_id)
-    if (debt) {
-      const updatedInstallments = debt.debt_installments.map(i =>
-        i.id === inst.id ? { ...i, paid: newPaid } : i
-      )
-      const totalPaid = updatedInstallments.filter(i => i.paid).reduce((s, i) => s + i.amount, 0)
-      const newStatus = totalPaid >= debt.amount ? 'paid' :
-                        totalPaid > 0 ? 'partial' : 'unpaid'
-      await supabase.from('debts').update({ status: newStatus }).eq('id', debt.id)
-    }
-
-    fetchData()
-    if (showDetail) {
-      const updated = debts.find(d => d.id === showDetail.id)
-      if (updated) setShowDetail(updated)
-    }
-  }
-
-  async function handleDelete(id: string, name: string) {
-    if (!confirm(`ลบหนี้ "${name}"? (รวมถึงงวดผ่อนทั้งหมด)`)) return
-    await supabase.from('debts').delete().eq('id', id)
-    fetchData()
-  }
-
-  // Summary
-  const totalDebt = debts.reduce((sum, d) => sum + d.amount, 0)
-  const totalPaid = debts.reduce((sum, d) => sum + getPaidAmount(d), 0)
-  const totalRemaining = totalDebt - totalPaid
-
-  // Overdue installments
-  const today = new Date().toISOString().split('T')[0]
-  const overdueInstallments = debts.flatMap(d =>
-    d.debt_installments.filter(i =>
-      !i.paid && i.due_date && i.due_date < today
-    )
+  // กรองเฉพาะ category ที่มีหนี้
+  const activeCategories = debtCategories.filter(cat =>
+    debts.some(d => d.debt_category_id === cat.id)
   )
 
   return (
@@ -234,230 +192,154 @@ export default function DebtsPage() {
             <button onClick={() => router.push('/')} className="text-gray-500">← กลับ</button>
             <h1 className="text-xl font-bold text-gray-800">💳 หนี้สิน</h1>
           </div>
-          <button onClick={openAdd}
+          <button onClick={() => setShowAdd(true)}
             className="bg-red-500 text-white text-sm px-3 py-2 rounded-xl">
             + เพิ่มหนี้
           </button>
         </div>
 
-        {/* Overdue Warning */}
-        {overdueInstallments.length > 0 && (
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-3 mb-3">
-            <div className="text-sm font-bold text-red-600">⚠️ มีงวดเกินกำหนด</div>
-            <div className="text-xs text-red-500 mt-1">
-              มี {overdueInstallments.length} งวดที่เลยกำหนดชำระแล้วค่ะ
-            </div>
-          </div>
-        )}
+{/* Summary */}
+{debts.length > 0 && (
+  <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
+    <div className="text-xs text-gray-500">หนี้คงเหลือทั้งหมด</div>
+    <div className="text-3xl font-bold text-red-500 mb-3">
+      {debts.reduce((sum, d) => {
+        const paid = d.has_installments
+          ? d.debt_installments.filter(i => i.paid).reduce((s, i) => s + i.amount, 0)
+          : d.paid_amount
+        return sum + (d.amount - paid)
+      }, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
+    </div>
+    <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
+      <div>
+        <div className="text-xs text-gray-500">หนี้ทั้งหมด</div>
+        <div className="font-bold text-gray-800">
+          {debts.reduce((sum, d) => sum + d.amount, 0)
+            .toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
+        </div>
+      </div>
+      <div>
+        <div className="text-xs text-gray-500">ชำระแล้ว</div>
+        <div className="font-bold text-green-500">
+          {debts.reduce((sum, d) => {
+            const paid = d.has_installments
+              ? d.debt_installments.filter(i => i.paid).reduce((s, i) => s + i.amount, 0)
+              : d.paid_amount
+            return sum + paid
+          }, 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
-        {/* Summary */}
-        <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
-          <div className="text-xs text-gray-500">หนี้คงเหลือ</div>
-          <div className="text-3xl font-bold text-red-500">
-            {totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}฿
-          </div>
-          <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
-            <div>
-              <div className="text-xs text-gray-500">หนี้ทั้งหมด</div>
-              <div className="font-bold text-gray-800">{totalDebt.toLocaleString()}฿</div>
-            </div>
-            <div>
-              <div className="text-xs text-gray-500">จ่ายแล้ว</div>
-              <div className="font-bold text-green-500">{totalPaid.toLocaleString()}฿</div>
-            </div>
+{/* รอบบิลเดือนนี้ */}
+{debts.length > 0 && (() => {
+  const monthlyTotal = debts.reduce((sum, debt) => {
+    const inst = debt.debt_installments.find(i => {
+      if (!i.due_date) return false
+      const d = new Date(i.due_date)
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear
+    })
+    if (inst) return sum + inst.amount
+    if (!debt.has_installments) return sum + (debt.amount - debt.paid_amount)
+    return sum
+  }, 0)
+
+  const monthlyPaid = debts.reduce((sum, debt) => {
+    const inst = debt.debt_installments.find(i => {
+      if (!i.due_date) return false
+      const d = new Date(i.due_date)
+      return d.getMonth() === currentMonth && d.getFullYear() === currentYear
+    })
+    if (inst && inst.paid) return sum + inst.amount
+    if (!debt.has_installments && debt.paid_amount > 0) return sum + debt.paid_amount
+    return sum
+  }, 0)
+
+  const monthlyRemaining = monthlyTotal - monthlyPaid
+  const monthName = today.toLocaleDateString('th-TH', { month: 'long', year: '2-digit' })
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
+      <div className="text-xs text-gray-500 mb-2">📅 รอบบิลเดือนนี้ ({monthName})</div>
+      <div className={`text-2xl font-bold ${monthlyRemaining <= 0 ? 'text-green-500' : 'text-orange-500'}`}>
+        {monthlyRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
+      </div>
+      <div className="text-xs text-gray-400 mt-0.5">คงเหลือที่ต้องจ่ายเดือนนี้</div>
+      <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-gray-100">
+        <div>
+          <div className="text-xs text-gray-500">ยอดรวมเดือนนี้</div>
+          <div className="font-bold text-gray-800">
+            {monthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
           </div>
         </div>
-
-        {/* Filter */}
-        <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
-          <button onClick={() => setFilter('unpaid')}
-            className={`flex-1 min-w-fit py-2 px-3 rounded-xl text-xs font-medium whitespace-nowrap ${
-              filter === 'unpaid' ? 'bg-red-500 text-white' : 'bg-white text-gray-600'
-            }`}>
-            🔴 ยังไม่จ่าย
-          </button>
-          <button onClick={() => setFilter('partial')}
-            className={`flex-1 min-w-fit py-2 px-3 rounded-xl text-xs font-medium whitespace-nowrap ${
-              filter === 'partial' ? 'bg-yellow-500 text-white' : 'bg-white text-gray-600'
-            }`}>
-            🟡 ผ่อนอยู่
-          </button>
-          <button onClick={() => setFilter('paid')}
-            className={`flex-1 min-w-fit py-2 px-3 rounded-xl text-xs font-medium whitespace-nowrap ${
-              filter === 'paid' ? 'bg-green-500 text-white' : 'bg-white text-gray-600'
-            }`}>
-            ✅ ปิดยอด
-          </button>
-          <button onClick={() => setFilter('all')}
-            className={`flex-1 min-w-fit py-2 px-3 rounded-xl text-xs font-medium whitespace-nowrap ${
-              filter === 'all' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600'
-            }`}>
-            ทั้งหมด
-          </button>
+        <div>
+          <div className="text-xs text-gray-500">จ่ายแล้ว</div>
+          <div className="font-bold text-green-500">
+            {monthlyPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
+          </div>
         </div>
+      </div>
+    </div>
+  )
+})()}
 
-        {/* Debt List */}
-        {filteredDebts.length === 0 ? (
+        {loading ? (
+          <p className="text-center text-gray-400 py-8">กำลังโหลด...</p>
+        ) : activeCategories.length === 0 ? (
           <div className="text-center text-gray-400 py-12">
             <div className="text-4xl mb-2">💳</div>
-            <p>ไม่มีรายการค่ะ</p>
+            <p>ยังไม่มีหนี้สินค่ะ</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {filteredDebts.map(d => {
-              const status = calcStatus(d)
-              const paidAmt = getPaidAmount(d)
-              const remaining = d.amount - paidAmt
-              const paidInstallments = d.debt_installments.filter(i => i.paid).length
-              const totalInst = d.debt_installments.length
-              const hasOverdue = d.debt_installments.some(i =>
-                !i.paid && i.due_date && i.due_date < today
-              )
+          <div className="space-y-3">
+            {activeCategories.map(cat => {
+              const status = getCategoryStatus(cat.id)
+              const monthlyAmount = getCategoryMonthlyAmount(cat.id)
+              const catDebts = debts.filter(d => d.debt_category_id === cat.id)
 
               return (
-                <button key={d.id} onClick={() => setShowDetail(d)}
-                  className={`w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-95 transition-transform ${
-                    hasOverdue ? 'border-2 border-red-200' : ''
-                  }`}>
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1">
-                      <div className="font-bold text-gray-800">{d.name}</div>
-                      <div className="flex gap-2 mt-1 flex-wrap">
-                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                          {d.category}
-                        </span>
-                        {d.has_installments && (
-                          <span className="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">
-                            📅 ผ่อน {paidInstallments}/{totalInst} งวด
-                          </span>
-                        )}
-                        {hasOverdue && (
-                          <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
-                            ⚠️ เกินกำหนด
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <span className={`text-xs font-bold px-2 py-1 rounded-full ml-2 ${
+                <button key={cat.id}
+                  onClick={() => router.push(`/debts/${cat.id}`)}
+                  className="w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-95 transition-transform">
+
+                  {/* ชื่อ + สถานะ */}
+                  <div className="flex justify-between items-start mb-1">
+                    <div className="font-bold text-gray-800">💳 {cat.name}</div>
+                    <span className={`text-xs font-bold px-2 py-1 rounded-full ${
                       status === 'paid' ? 'bg-green-100 text-green-600' :
                       status === 'partial' ? 'bg-yellow-100 text-yellow-600' :
-                      'bg-red-100 text-red-600'
+                      status === 'unpaid' ? 'bg-red-100 text-red-600' :
+                      'bg-gray-100 text-gray-500'
                     }`}>
-                      {status === 'paid' ? '✅' : status === 'partial' ? '🟡' : '🔴'}
+                      {status === 'paid' ? '✅ ชำระแล้ว' :
+                       status === 'partial' ? '🟡 ชำระบางส่วน' :
+                       status === 'unpaid' ? '⏳ ยังไม่ชำระ' : '-'}
                     </span>
                   </div>
 
-                  {/* Progress */}
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-gray-500">
-                        {paidAmt.toFixed(2)} / {d.amount.toLocaleString()}฿
-                      </span>
+                  {/* รอบบิล + ยอด */}
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-gray-600">
+                      รอบบิล {getMonthName(today)}
+                      {cat.due_day ? ` · ทุกวันที่ ${cat.due_day}` : ''}
+                    </div>
+                    <div className="flex items-center gap-1">
                       <span className="font-bold text-red-500">
-                        เหลือ {remaining.toFixed(2)}฿
+                        {monthlyAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}฿
                       </span>
+                      <span className="text-gray-400">›</span>
                     </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${
-                        status === 'paid' ? 'bg-green-500' : 'bg-yellow-500'
-                      }`}
-                        style={{ width: `${Math.min(100, (paidAmt / d.amount) * 100)}%` }} />
-                    </div>
+                  </div>
+
+                  {/* จำนวนรายการ */}
+                  <div className="text-xs text-gray-400 mt-1">
+                    {catDebts.length} รายการ
                   </div>
                 </button>
               )
             })}
-          </div>
-        )}
-
-        {/* Detail Modal */}
-        {showDetail && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
-            <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-lg">{showDetail.name}</h3>
-                <button onClick={() => setShowDetail(null)} className="text-gray-400 text-xl">✕</button>
-              </div>
-
-              {/* Info */}
-              <div className="bg-gray-50 rounded-xl p-3 mb-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">ยอดทั้งหมด</span>
-                  <span className="font-bold">{showDetail.amount.toLocaleString()}฿</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-500">จ่ายแล้ว</span>
-                  <span className="font-bold text-green-500">{getPaidAmount(showDetail).toFixed(2)}฿</span>
-                </div>
-                <div className="flex justify-between text-sm font-bold pt-2 border-t border-gray-200 mt-2">
-                  <span>คงเหลือ</span>
-                  <span className="text-red-500">{(showDetail.amount - getPaidAmount(showDetail)).toFixed(2)}฿</span>
-                </div>
-              </div>
-
-              {/* Installments */}
-              {showDetail.has_installments && showDetail.debt_installments.length > 0 && (
-                <div className="mb-3">
-                  <h4 className="font-bold text-sm text-gray-700 mb-2">งวดผ่อน</h4>
-                  <div className="space-y-2">
-                    {[...showDetail.debt_installments]
-                      .sort((a, b) => a.installment_no - b.installment_no)
-                      .map(inst => {
-                      const isOverdue = inst.due_date && inst.due_date < today && !inst.paid
-                      return (
-                        <div key={inst.id}
-                          className={`rounded-xl p-3 ${
-                            inst.paid ? 'bg-green-50' :
-                            isOverdue ? 'bg-red-50 border border-red-200' :
-                            'bg-gray-50'
-                          }`}>
-                          <div className="flex justify-between items-center">
-                            <div className="flex-1">
-                              <div className="font-medium text-sm">งวดที่ {inst.installment_no}</div>
-                              {inst.due_date && (
-                                <div className={`text-xs mt-0.5 ${
-                                  isOverdue ? 'text-red-500 font-bold' : 'text-gray-500'
-                                }`}>
-                                  📅 {new Date(inst.due_date).toLocaleDateString('th-TH', {
-                                    day: 'numeric', month: 'short', year: '2-digit'
-                                  })}
-                                  {isOverdue && ' ⚠️ เกินกำหนด'}
-                                </div>
-                              )}
-                            </div>
-                            <div className="text-right mr-3">
-                              <div className="font-bold">{inst.amount.toFixed(2)}฿</div>
-                            </div>
-                            <button onClick={() => toggleInstallmentPaid(inst)}
-                              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                inst.paid
-                                  ? 'bg-green-500 text-white'
-                                  : 'bg-white border-2 border-gray-300 text-gray-400'
-                              }`}>
-                              {inst.paid ? '✓' : ''}
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {showDetail.note && (
-                <div className="bg-yellow-50 rounded-xl p-3 mb-3">
-                  <div className="text-xs text-yellow-700 font-bold mb-1">หมายเหตุ</div>
-                  <div className="text-sm text-gray-700">{showDetail.note}</div>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <button onClick={() => { setShowDetail(null); handleDelete(showDetail.id, showDetail.name) }}
-                  className="flex-1 bg-red-100 text-red-600 font-bold py-3 rounded-xl">
-                  🗑️ ลบ
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
@@ -466,42 +348,44 @@ export default function DebtsPage() {
           <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
             <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-lg">{editingDebt ? 'แก้ไขหนี้' : 'เพิ่มหนี้'}</h3>
+                <h3 className="font-bold text-lg">เพิ่มหนี้</h3>
                 <button onClick={() => setShowAdd(false)} className="text-gray-400 text-xl">✕</button>
               </div>
 
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs text-gray-500">รายการ *</label>
+                  <label className="text-xs text-gray-500">หมวดหมู่ *</label>
+                  <select value={form.debt_category_id}
+                    onChange={e => setForm({...form, debt_category_id: e.target.value})}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
+                    <option value="">เลือกหมวดหมู่</option>
+                    {debtCategories.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-500">ชื่อรายการ *</label>
                   <input value={form.name}
                     onChange={e => setForm({...form, name: e.target.value})}
                     className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
-                    placeholder="เช่น ตุ๊กตา SPaylater" />
+                    placeholder="เช่น ตุ๊กตา, ทิชชู่" />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-gray-500">หมวดหมู่</label>
-                    <select value={form.category}
-                      onChange={e => setForm({...form, category: e.target.value})}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
-                      {DEBT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500">ยอดรวม (฿) *</label>
-                    <input type="number" step="0.01" value={form.amount}
-                      onChange={e => setForm({...form, amount: e.target.value})}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
-                      placeholder="0" />
-                  </div>
+                <div>
+                  <label className="text-xs text-gray-500">ยอดรวม (฿) *</label>
+                  <input type="number" step="0.01" value={form.amount}
+                    onChange={e => setForm({...form, amount: e.target.value})}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
+                    placeholder="0" />
                 </div>
 
                 {/* Toggle ผ่อน */}
                 <div className="bg-purple-50 rounded-xl p-3 flex items-center justify-between">
                   <div>
                     <div className="font-bold text-sm text-purple-700">📅 แบ่งจ่ายเป็นงวด</div>
-                    <div className="text-xs text-purple-500">เปิดสำหรับผ่อน เช่น SPaylater</div>
+                    <div className="text-xs text-purple-500">เปิดสำหรับผ่อนหลายเดือน</div>
                   </div>
                   <button onClick={() => setForm({...form, has_installments: !form.has_installments})}
                     className={`relative w-12 h-7 rounded-full transition-colors ${
@@ -513,9 +397,8 @@ export default function DebtsPage() {
                   </button>
                 </div>
 
-                {/* Installments Setup */}
                 {form.has_installments ? (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label className="text-xs text-gray-500">จำนวนงวด</label>
@@ -524,50 +407,54 @@ export default function DebtsPage() {
                           className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
                           min="1" />
                       </div>
-                      <div className="flex items-end">
-                        <button onClick={generateInstallments}
-                          className="w-full bg-purple-500 text-white rounded-xl p-2 text-sm font-medium">
-                          🔄 สร้างงวด
-                        </button>
+                      <div>
+
+<div>
+  <label className="text-xs text-gray-500">ยอดงวดปกติ (฿)</label>
+  <input type="number" step="0.01" value={form.installment_amount}
+    onChange={e => setForm({...form, installment_amount: e.target.value})}
+    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
+    placeholder="เช่น 128.10" />
+</div>
+<div>
+  <label className="text-xs text-gray-500">ยอดงวดสุดท้าย (฿)</label>
+  <input type="number" step="0.01" value={form.last_installment_amount}
+    onChange={e => setForm({...form, last_installment_amount: e.target.value})}
+    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
+    placeholder="เช่น 128.14 (ถ้าเท่ากันเว้นว่างไว้ค่ะ)" />
+</div>
+
                       </div>
                     </div>
-
-                    {form.installments.length > 0 && (
-                      <div className="bg-gray-50 rounded-xl p-3 space-y-2">
-                        <div className="text-xs text-gray-500 mb-1">ตั้งค่ารายงวด</div>
-                        {form.installments.map((inst, i) => (
-                          <div key={i} className="bg-white rounded-lg p-2">
-                            <div className="text-xs text-gray-500 mb-1">งวดที่ {i + 1}</div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <input type="number" step="0.01" value={inst.amount}
-                                onChange={e => updateInstallment(i, 'amount', e.target.value)}
-                                className="border border-gray-200 rounded-lg p-1.5 text-sm"
-                                placeholder="จำนวนเงิน" />
-                              <input type="date" value={inst.due_date}
-                                onChange={e => updateInstallment(i, 'due_date', e.target.value)}
-                                className="border border-gray-200 rounded-lg p-1.5 text-sm" />
+                    <div>
+                      <label className="text-xs text-gray-500">วันที่เริ่มงวดแรก</label>
+                      <input type="date" value={form.start_date}
+                        onChange={e => setForm({...form, start_date: e.target.value})}
+                        className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                    </div>
+                    {form.installment_amount && form.total_installments && form.start_date && (
+                      <div className="bg-gray-50 rounded-xl p-3 text-xs text-gray-500">
+                        <div className="font-medium text-gray-700 mb-1">ตัวอย่างงวด</div>
+                        {Array.from({ length: Math.min(3, Number(form.total_installments)) }, (_, i) => {
+                          const d = new Date(form.start_date)
+                          d.setMonth(d.getMonth() + i)
+                          return (
+                            <div key={i}>
+                              งวด {i + 1}: {Number(form.installment_amount).toFixed(2)}฿ · {d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
                             </div>
-                          </div>
-                        ))}
+                          )
+                        })}
+                        {Number(form.total_installments) > 3 && <div>...</div>}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <>
-                    <div>
-                      <label className="text-xs text-gray-500">จ่ายไปแล้ว (฿)</label>
-                      <input type="number" step="0.01" value={form.paid_amount}
-                        onChange={e => setForm({...form, paid_amount: e.target.value})}
-                        className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
-                        placeholder="0" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500">วันครบกำหนด</label>
-                      <input type="date" value={form.due_date}
-                        onChange={e => setForm({...form, due_date: e.target.value})}
-                        className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
-                    </div>
-                  </>
+                  <div>
+                    <label className="text-xs text-gray-500">วันครบกำหนด</label>
+                    <input type="date" value={form.due_date}
+                      onChange={e => setForm({...form, due_date: e.target.value})}
+                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                  </div>
                 )}
 
                 <div>
