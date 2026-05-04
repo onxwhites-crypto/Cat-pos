@@ -85,7 +85,7 @@ export default function FinancePage() {
         .order('date', { ascending: false }),
     ])
 
-    setOrders((o || []) as Order[])
+    setOrders((o || []) as any)
     setExpenses(e || [])
   }
 
