@@ -114,10 +114,11 @@ async function startScanner() {
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText: string) => {
-          // ค้นหาสินค้าจากบาร์โค้ด
-          const found = products.find(p =>
-            p.barcode === decodedText || p.code === decodedText
-          )
+
+const found = products.find(p =>
+  p.code === decodedText
+)
+
           if (found) {
             addToCart(found)
             stopScanner()
