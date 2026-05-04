@@ -185,12 +185,20 @@ async function stopScanner() {
   const total = Math.max(0, subtotal - discount)
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0)
 
-  const filteredProducts = products.filter(p => {
-    const matchCategory = !selectedCategory || p.category_id === selectedCategory
-    const matchSearch = !search ||
+
+
+const filteredProducts = products
+  .filter(p => {
+    const matchSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.code?.toLowerCase().includes(search.toLowerCase())
-    return matchCategory && matchSearch
+    const matchCategory = !selectedCategory || p.category_id === selectedCategory
+    return matchSearch && matchCategory
+  })
+  .sort((a, b) => {
+    if (a.stock_qty > 0 && b.stock_qty <= 0) return -1
+    if (a.stock_qty <= 0 && b.stock_qty > 0) return 1
+    return 0
   })
 
   const filteredCustomers = customers.filter(c =>
@@ -442,7 +450,9 @@ setDeliveryAddress('')
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-            {filteredProducts.map(product => {
+            {filteredProducts
+  .filter(p => preorderMode || p.stock_qty > 0)
+  .map(product => {
               const inCart = cart.find(c => c.product_id === product.id)
               return (
 <button key={product.id}

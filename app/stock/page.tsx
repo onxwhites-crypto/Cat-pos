@@ -55,12 +55,19 @@ const [form, setForm] = useState({
     setCategories(c || [])
   }
 
-  const filteredProducts = products.filter(p => {
-    const matchCategory = !selectedCategory || p.category_id === selectedCategory
-    const matchSearch = !search ||
+const filteredProducts = products
+  .filter(p => {
+    const matchSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.code?.toLowerCase().includes(search.toLowerCase())
-    return matchCategory && matchSearch
+    const matchCategory = !selectedCategory || p.category_id === selectedCategory
+    return matchSearch && matchCategory
+  })
+  .sort((a, b) => {
+    // มีของก่อน ไม่มีทีหลัง
+    if (a.stock_qty > 0 && b.stock_qty <= 0) return -1
+    if (a.stock_qty <= 0 && b.stock_qty > 0) return 1
+    return 0
   })
 
 async function startBarcodeScanner() {
