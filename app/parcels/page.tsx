@@ -59,7 +59,6 @@ const [editItems, setEditItems] = useState<{
   original_price: number
   item_cost: number
   unit_cost: number
-  service_fee_share: number
 }[]>([])
   const [showEditProductSearch, setShowEditProductSearch] = useState(false)
   const [editProductSearch, setEditProductSearch] = useState('')
