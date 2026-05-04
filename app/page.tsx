@@ -103,6 +103,12 @@ export default function Home() {
             <div className="text-xs opacity-80">POS</div>
           </a>
 
+          <a href="/post" className="bg-blue-400 text-white rounded-2xl p-5 shadow-sm active:scale-95 transition-transform">
+  <div className="text-3xl mb-2">📢</div>
+  <div className="font-bold">โพสขาย</div>
+  <div className="text-xs opacity-80">Facebook</div>
+</a>
+
         <a href="/receiving" className="bg-indigo-500 text-white rounded-2xl p-5 shadow-sm active:scale-95 transition-transform">
           <div className="text-3xl mb-2">📦</div>
           <div className="font-bold">สั่งออเดอร์</div>
