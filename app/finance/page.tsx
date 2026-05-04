@@ -3,16 +3,18 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
+type OrderItem = {
+  quantity: number
+  products: { avg_cost: number | null } | null
+}
+
 type Order = {
   id: string
   order_date: string
   total: number
   payment_method: string
   payment_status: string
-  order_items: {
-    quantity: number
-    products: { avg_cost: number } | null
-  }[]
+  order_items: OrderItem[]
 }
 
 type Expense = {
@@ -56,21 +58,14 @@ export default function FinancePage() {
     let from: Date
 
     switch (period) {
-      case 'today':
-        from = today
-        break
+      case 'today': from = today; break
       case 'week':
         from = new Date(today)
         from.setDate(today.getDate() - 7)
         break
-      case 'month':
-        from = new Date(today.getFullYear(), today.getMonth(), 1)
-        break
-      case 'year':
-        from = new Date(today.getFullYear(), 0, 1)
-        break
-      default:
-        from = new Date(2020, 0, 1)
+      case 'month': from = new Date(today.getFullYear(), today.getMonth(), 1); break
+      case 'year': from = new Date(today.getFullYear(), 0, 1); break
+      default: from = new Date(2020, 0, 1)
     }
     return from.toISOString().split('T')[0]
   }
@@ -90,7 +85,7 @@ export default function FinancePage() {
         .order('date', { ascending: false }),
     ])
 
-    setOrders(o || [])
+    setOrders((o || []) as Order[])
     setExpenses(e || [])
   }
 
@@ -115,10 +110,9 @@ export default function FinancePage() {
     fetchData()
   }
 
-  // คำนวณ
-  const totalSales = orders.reduce((sum, o) => sum + o.total, 0)
+  const totalSales = orders.reduce((sum, o) => sum + (o.total || 0), 0)
   const totalCost = orders.reduce((sum, o) =>
-    sum + o.order_items.reduce((s, i) => s + (i.products?.avg_cost || 0) * i.quantity, 0), 0)
+    sum + o.order_items.reduce((s, i) => s + ((i.products?.avg_cost || 0) * i.quantity), 0), 0)
   const grossProfit = totalSales - totalCost
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
   const netProfit = grossProfit - totalExpenses
@@ -126,25 +120,19 @@ export default function FinancePage() {
   const cashSales = orders.filter(o => o.payment_method === 'cash').reduce((sum, o) => sum + o.total, 0)
   const transferSales = orders.filter(o => o.payment_method === 'transfer').reduce((sum, o) => sum + o.total, 0)
 
-  // Group expenses by category
   const expensesByCategory: { [k: string]: number } = {}
   expenses.forEach(e => {
     expensesByCategory[e.category] = (expensesByCategory[e.category] || 0) + e.amount
   })
 
   const periodLabels: { [k: string]: string } = {
-    today: 'วันนี้',
-    week: '7 วันล่าสุด',
-    month: 'เดือนนี้',
-    year: 'ปีนี้',
-    all: 'ทั้งหมด',
+    today: 'วันนี้', week: '7 วันล่าสุด', month: 'เดือนนี้', year: 'ปีนี้', all: 'ทั้งหมด',
   }
 
   return (
     <main className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-md mx-auto">
 
-        {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <button onClick={() => router.push('/')} className="text-gray-500">← กลับ</button>
@@ -156,7 +144,6 @@ export default function FinancePage() {
           </button>
         </div>
 
-        {/* Period Filter */}
         <div className="flex gap-2 overflow-x-auto pb-2 mb-3">
           {(['today', 'week', 'month', 'year', 'all'] as const).map(p => (
             <button key={p} onClick={() => setPeriod(p)}
@@ -168,10 +155,7 @@ export default function FinancePage() {
           ))}
         </div>
 
-        {/* Net Profit */}
-        <div className={`rounded-2xl p-4 shadow-sm mb-3 ${
-          netProfit >= 0 ? 'bg-green-50' : 'bg-red-50'
-        }`}>
+        <div className={`rounded-2xl p-4 shadow-sm mb-3 ${netProfit >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
           <div className="text-xs text-gray-500">กำไรสุทธิ ({periodLabels[period]})</div>
           <div className={`text-3xl font-bold ${netProfit >= 0 ? 'text-green-600' : 'text-red-500'}`}>
             {netProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}฿
@@ -181,7 +165,6 @@ export default function FinancePage() {
           </div>
         </div>
 
-        {/* Income Summary */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
           <h3 className="font-bold text-gray-700 mb-3">💵 รายรับ</h3>
           <div className="space-y-2">
@@ -214,17 +197,13 @@ export default function FinancePage() {
           )}
         </div>
 
-        {/* Expenses Summary */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
           <h3 className="font-bold text-gray-700 mb-3">💸 รายจ่าย</h3>
-
           {Object.keys(expensesByCategory).length === 0 ? (
             <p className="text-gray-400 text-sm text-center py-4">ไม่มีรายจ่ายในช่วงนี้</p>
           ) : (
             <div className="space-y-2 mb-3">
-              {Object.entries(expensesByCategory)
-                .sort((a, b) => b[1] - a[1])
-                .map(([cat, amt]) => (
+              {Object.entries(expensesByCategory).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
                 <div key={cat} className="flex justify-between text-sm">
                   <span className="text-gray-500">{cat}</span>
                   <span className="font-medium">{amt.toLocaleString()}฿</span>
@@ -232,14 +211,12 @@ export default function FinancePage() {
               ))}
             </div>
           )}
-
           <div className="flex justify-between font-bold pt-2 border-t border-gray-100">
             <span className="text-gray-700">รวมรายจ่าย</span>
             <span className="text-red-500">-{totalExpenses.toLocaleString()}฿</span>
           </div>
         </div>
 
-        {/* Expense List */}
         {expenses.length > 0 && (
           <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
             <h3 className="font-bold text-gray-700 mb-3">รายการรายจ่าย</h3>
@@ -250,15 +227,12 @@ export default function FinancePage() {
                     <div className="text-sm font-medium">{e.category}</div>
                     {e.note && <div className="text-xs text-gray-400 mt-0.5">{e.note}</div>}
                     <div className="text-xs text-gray-400 mt-0.5">
-                      {new Date(e.date).toLocaleDateString('th-TH', {
-                        day: 'numeric', month: 'short', year: '2-digit'
-                      })}
+                      {new Date(e.date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: '2-digit' })}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 ml-2">
                     <span className="font-bold text-red-500">-{e.amount.toLocaleString()}฿</span>
-                    <button onClick={() => handleDeleteExpense(e.id)}
-                      className="text-red-400 text-sm">🗑️</button>
+                    <button onClick={() => handleDeleteExpense(e.id)} className="text-red-400 text-sm">🗑️</button>
                   </div>
                 </div>
               ))}
@@ -266,7 +240,6 @@ export default function FinancePage() {
           </div>
         )}
 
-        {/* Add Expense Modal */}
         {showAddExpense && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
             <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
@@ -274,17 +247,14 @@ export default function FinancePage() {
                 <h3 className="font-bold text-lg">เพิ่มรายจ่าย</h3>
                 <button onClick={() => setShowAddExpense(false)} className="text-gray-400 text-xl">✕</button>
               </div>
-
               <div className="space-y-3">
                 <div>
                   <label className="text-xs text-gray-500">หมวดหมู่</label>
-                  <select value={form.category}
-                    onChange={e => setForm({...form, category: e.target.value})}
+                  <select value={form.category} onChange={e => setForm({...form, category: e.target.value})}
                     className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
                     {EXPENSE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
                   </select>
                 </div>
-
                 <div>
                   <label className="text-xs text-gray-500">จำนวนเงิน (฿) *</label>
                   <input type="number" value={form.amount}
@@ -292,23 +262,19 @@ export default function FinancePage() {
                     className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
                     placeholder="0" autoFocus />
                 </div>
-
                 <div>
                   <label className="text-xs text-gray-500">วันที่</label>
                   <input type="date" value={form.date}
                     onChange={e => setForm({...form, date: e.target.value})}
                     className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
                 </div>
-
                 <div>
                   <label className="text-xs text-gray-500">หมายเหตุ</label>
-                  <input value={form.note}
-                    onChange={e => setForm({...form, note: e.target.value})}
+                  <input value={form.note} onChange={e => setForm({...form, note: e.target.value})}
                     className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
                     placeholder="รายละเอียดเพิ่มเติม" />
                 </div>
               </div>
-
               <button onClick={handleAddExpense} disabled={saving || !form.amount}
                 className="w-full bg-yellow-500 text-white font-bold py-3 rounded-2xl mt-4 disabled:opacity-50">
                 {saving ? 'กำลังบันทึก...' : '✅ เพิ่มรายจ่าย'}
