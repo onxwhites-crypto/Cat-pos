@@ -163,6 +163,12 @@ export default function Home() {
   <div className="text-xs opacity-80">Debts</div>
 </a>
 
+<a href="/import" className="bg-blue-500 text-white rounded-2xl p-5 shadow-sm active:scale-95 transition-transform">
+  <div className="text-3xl mb-2">📥</div>
+  <div className="font-bold">Import</div>
+  <div className="text-xs opacity-80">สินค้า</div>
+</a>
+
         </div>
 
       </div>
