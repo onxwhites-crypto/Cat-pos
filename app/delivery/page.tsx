@@ -44,6 +44,7 @@ export default function DeliveryPage() {
   const [filterZone, setFilterZone] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'packed' | 'delivered'>('pending')
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null)
+  const [allDeliveries, setAllDeliveries] = useState<Delivery[]>([])
   const [packBagCount, setPackBagCount] = useState(0)
   const [editScheduledDate, setEditScheduledDate] = useState('')
 
@@ -71,11 +72,18 @@ export default function DeliveryPage() {
     if (filterStatus !== 'all') query = query.eq('status', filterStatus)
 
     const { data: d } = await query
-    const { data: z } = await supabase.from('zones').select('*').order('name')
+    const { data: z } = await supabase.from('zones').select('*').order('sort_order')
 
-    setDeliveries(d || [])
-    setZones(z || [])
-    setLoading(false)
+setDeliveries(d || [])
+setZones(z || [])
+setLoading(false)
+
+// ดึงทั้งหมดแยก ไม่ filter status/zone เพื่อนับจำนวนโซน
+const { data: allD } = await supabase
+  .from('deliveries')
+  .select('zone_id, status')
+  .eq('scheduled_date', filterDate)
+setAllDeliveries(allD || [])
   }
 
   async function markAsDelivered(id: string) {
@@ -203,14 +211,21 @@ async function updateScheduledDate(id: string, date: string) {
             }`}>
             ทุกโซน
           </button>
-          {zones.map(z => (
-            <button key={z.id} onClick={() => setFilterZone(z.id)}
-              className={`px-3 py-1 rounded-full text-sm whitespace-nowrap ${
-                filterZone === z.id ? 'bg-green-500 text-white' : 'bg-white text-gray-600'
-              }`}>
-              📍 {z.name}
-            </button>
-          ))}
+
+{zones
+  .filter(z => allDeliveries.some(d => d.zone_id === z.id && (d.status === 'pending' || d.status === 'packed')))
+  .map(z => {
+    const zoneCount = allDeliveries.filter(d => d.zone_id === z.id && (d.status === 'pending' || d.status === 'packed')).length
+
+    return (
+      <button key={z.id} onClick={() => setFilterZone(z.id)}
+        className={`px-3 py-1 rounded-full text-sm whitespace-nowrap ${
+          filterZone === z.id ? 'bg-green-500 text-white' : 'bg-white text-gray-600'
+        }`}>
+        📍 {z.name} ({zoneCount})
+      </button>
+    )
+  })}
         </div>
 
 {/* Status Filter */}
