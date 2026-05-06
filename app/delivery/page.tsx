@@ -44,7 +44,7 @@ export default function DeliveryPage() {
   const [filterZone, setFilterZone] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'packed' | 'delivered'>('pending')
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null)
-  const [allDeliveries, setAllDeliveries] = useState<Delivery[]>([])
+  const [allDeliveries, setAllDeliveries] = useState<{ zone_id: string; status: string }[]>([])
   const [packBagCount, setPackBagCount] = useState(0)
   const [editScheduledDate, setEditScheduledDate] = useState('')
 
