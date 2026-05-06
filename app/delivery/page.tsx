@@ -45,6 +45,7 @@ export default function DeliveryPage() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'packed' | 'delivered'>('pending')
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null)
   const [packBagCount, setPackBagCount] = useState(0)
+  const [editScheduledDate, setEditScheduledDate] = useState('')
 
   useEffect(() => { fetchData() }, [filterDate, filterZone, filterStatus])
 
@@ -95,13 +96,23 @@ export default function DeliveryPage() {
     setSelectedDelivery(null)
   }
 
+async function updateScheduledDate(id: string, date: string) {
+  await supabase.from('deliveries').update({ scheduled_date: date }).eq('id', id)
+  fetchData()
+  setSelectedDelivery(prev => prev ? { ...prev, scheduled_date: date } : null)
+}
+
   async function markAsPaid(orderId: string) {
     await supabase.from('orders').update({
       payment_status: 'paid',
       paid_at: new Date().toISOString(),
     }).eq('id', orderId)
     fetchData()
-    setSelectedDelivery(null)
+    // อัพเดท selectedDelivery ให้แสดงสถานะใหม่ ไม่ปิด modal
+    setSelectedDelivery(prev => prev ? {
+      ...prev,
+      orders: prev.orders ? { ...prev.orders, payment_status: 'paid' } : null
+    } : null)
   }
 
   async function markAsPacked(id: string, bagCount: number) {
@@ -383,6 +394,20 @@ export default function DeliveryPage() {
                   </span>
                 </div>
               </div>
+
+{/* แก้วันที่ส่ง */}
+<div className="bg-blue-50 rounded-xl p-3 mb-3">
+  <label className="text-xs text-blue-700 font-bold">📅 แก้วันที่ส่ง</label>
+  <div className="flex gap-2 mt-1">
+    <input type="date"
+      defaultValue={selectedDelivery.scheduled_date}
+      onChange={e => setEditScheduledDate(e.target.value)}
+      className="flex-1 border border-blue-200 rounded-xl p-2 text-sm" />
+    <button onClick={() => editScheduledDate && updateScheduledDate(selectedDelivery.id, editScheduledDate)}
+      className="bg-blue-500 text-white px-3 rounded-xl text-sm">บันทึก</button>
+  </div>
+</div>
+
 
               {/* Note */}
               {selectedDelivery.orders?.note && (
