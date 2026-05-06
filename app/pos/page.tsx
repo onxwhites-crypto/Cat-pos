@@ -467,10 +467,29 @@ export default function PosPage() {
                   <span>รวมทั้งสิ้น</span><span className="text-orange-500">{total.toLocaleString()}฿</span>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setShowHoldDialog(true)} className="bg-yellow-100 text-yellow-700 font-bold py-3 rounded-xl">📌 พักบิล</button>
-                <button onClick={() => setShowCheckout(true)} className="bg-orange-500 text-white font-bold py-3 rounded-xl">✅ สรุปยอด</button>
-              </div>
+
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <button onClick={() => setShowHoldDialog(true)} className="bg-yellow-100 text-yellow-700 font-bold py-3 rounded-xl">📌 พักบิล</button>
+            <button onClick={() => setShowCheckout(true)} className="bg-orange-500 text-white font-bold py-3 rounded-xl">✅ สรุปยอด</button>
+          </div>
+          <button onClick={() => {
+            const line = '──────────'
+            const customerName = customerSearch || 'ลูกค้าทั่วไป'
+            let text = `ลูกค้า: ${customerName}\n${line}\n`
+            cart.forEach(item => {
+              text += `${item.quantity}  ${item.name}\n${''.padStart(15)}${(item.unit_price * item.quantity).toLocaleString()}฿\n`
+            })
+            text += `${line}\n`
+            if (discount > 0) text += `ส่วนลด          -${discount.toLocaleString()}฿\n`
+            if (promoDiscount > 0) text += `โปรโมชั่น       -${promoDiscount.toLocaleString()}฿\n`
+            text += `รวม             ${total.toLocaleString()}฿`
+            navigator.clipboard.writeText(text)
+            alert('คัดลอกแล้วค่ะ!')
+          }}
+            className="w-full bg-gray-100 text-gray-600 font-bold py-3 rounded-xl">
+            📋 คัดลอกรายการสินค้า
+          </button>
+
             </div>
           </div>
         )}
