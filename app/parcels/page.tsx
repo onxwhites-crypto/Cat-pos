@@ -91,14 +91,16 @@ export default function ParcelsPage() {
     setLoading(false)
   }
 
-  const filtered = receipts.filter(r => {
-    const matchStatus = filterStatus === 'all' || r.status === filterStatus
-    const matchSearch = !search ||
-      r.order_name?.toLowerCase().includes(search.toLowerCase()) ||
-      r.tracking_no?.toLowerCase().includes(search.toLowerCase())
-    const matchOperator = !filterOperator || r.operators?.id === filterOperator
-    return matchStatus && matchSearch && matchOperator
-  })
+const filtered = receipts.filter(r => {
+  const matchStatus = filterStatus === 'all' || r.status === filterStatus
+  const matchSearch = !search ||
+    r.order_name?.toLowerCase().includes(search.toLowerCase()) ||
+    r.tracking_no?.toLowerCase().includes(search.toLowerCase())
+  const matchOperator = !filterOperator || r.operators?.id === filterOperator
+  const matchOrderDate = !filterOrderDate || r.order_date?.startsWith(filterOrderDate)
+  const matchReceivedDate = !filterReceivedDate || r.received_at?.startsWith(filterReceivedDate)
+  return matchStatus && matchSearch && matchOperator && matchOrderDate && matchReceivedDate
+})
 
   const sevenDaysAgo = new Date()
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)

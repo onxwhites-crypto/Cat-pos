@@ -95,6 +95,15 @@ export default function DeliveryPage() {
     setSelectedDelivery(null)
   }
 
+  async function markAsPaid(orderId: string) {
+    await supabase.from('orders').update({
+      payment_status: 'paid',
+      paid_at: new Date().toISOString(),
+    }).eq('id', orderId)
+    fetchData()
+    setSelectedDelivery(null)
+  }
+
   async function markAsPacked(id: string, bagCount: number) {
   if (bagCount <= 0) {
     alert('กรุณากรอกจำนวนถุงค่ะ')
@@ -382,6 +391,14 @@ export default function DeliveryPage() {
                   <div className="text-sm text-gray-700">{selectedDelivery.orders.note}</div>
                 </div>
               )}
+
+{/* ปุ่มชำระเงิน - แสดงเมื่อยังค้างชำระ */}
+{selectedDelivery.orders?.payment_status === 'pending' && (
+  <button onClick={() => markAsPaid(selectedDelivery.orders!.id)}
+    className="w-full bg-green-500 text-white font-bold py-3 rounded-xl mb-2">
+    💰 ชำระเงินแล้ว
+  </button>
+)}
 
 {/* Action */}
 {selectedDelivery.status === 'pending' && (
