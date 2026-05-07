@@ -37,6 +37,7 @@ const [form, setForm] = useState({
   barcode: '',
   unit: 'ชิ้น',
   selling_price: '',
+  avg_cost: '',
   low_stock_alert: '5',
   category_id: '',
   image_preview: '',
@@ -120,17 +121,20 @@ async function handleAddProduct() {
 
     const initialStock = Number(form.initial_stock) || 0
 
-    const { data: newProduct, error } = await supabase.from('products').insert({
-      name: form.name,
-      code: form.barcode || null,
-      barcode: form.barcode || null,
-      unit: form.unit,
-      selling_price: Number(form.selling_price) || 0,
-      low_stock_alert: Number(form.low_stock_alert) || 5,
-      category_id: form.category_id || null,
-      image_url,
-      stock_qty: initialStock,
-    }).select().single()
+const { data: newProduct, error } = await supabase.from('products').insert({
+  name: form.name,
+  code: form.barcode || null,
+  barcode: form.barcode || null,
+  unit: form.unit,
+  selling_price: Number(form.selling_price) || 0,
+  avg_cost: Number(form.avg_cost) || 0,
+  low_stock_alert: Number(form.low_stock_alert) || 5,
+  category_id: form.category_id || null,
+  image_url,
+  stock_qty: initialStock,
+}).select().single()
+
+
 
     if (!error && newProduct && initialStock > 0) {
       // บันทึก stock_movement
@@ -145,11 +149,13 @@ async function handleAddProduct() {
     }
 
     if (!error) {
-      setForm({
-        name: '', barcode: '', unit: 'ชิ้น', selling_price: '',
-        low_stock_alert: '5', category_id: '', image_preview: '',
-        image_file: null, initial_stock: '0',
-      })
+    setForm({
+      name: '', barcode: '', unit: 'ชิ้น', selling_price: '', avg_cost: '',
+      low_stock_alert: '5', category_id: '', image_preview: '',
+      image_file: null, initial_stock: '0',
+    })
+
+
       setShowAddProduct(false)
       fetchData()
     }
@@ -345,26 +351,34 @@ async function handleAddProduct() {
     placeholder="0" min="0" />
 </div>
 
-                {/* ราคาขาย + แจ้งเตือน */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-gray-500">ราคาขาย (฿)</label>
-                    <input type="number" value={form.selling_price}
-                      onChange={e => setForm({ ...form, selling_price: e.target.value })}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
-                      placeholder="0" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500">แจ้งเตือนเมื่อเหลือ</label>
-                    <input type="number" value={form.low_stock_alert}
-                      onChange={e => setForm({ ...form, low_stock_alert: e.target.value })}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
-                      placeholder="5" />
-                  </div>
-                </div>
+{/* ราคาขาย + ทุน */}
+<div className="grid grid-cols-2 gap-2">
+  <div>
+    <label className="text-xs text-gray-500">ราคาขาย (฿)</label>
+    <input type="number" value={form.selling_price}
+      onChange={e => setForm({ ...form, selling_price: e.target.value })}
+      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
+      placeholder="0" />
+  </div>
+  <div>
+    <label className="text-xs text-gray-500">ราคาทุน (฿)</label>
+    <input type="number" value={form.avg_cost}
+      onChange={e => setForm({ ...form, avg_cost: e.target.value })}
+      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
+      placeholder="0" />
+  </div>
+</div>
 
+{/* แจ้งเตือน */}
+<div>
+  <label className="text-xs text-gray-500">แจ้งเตือนเมื่อเหลือ</label>
+  <input type="number" value={form.low_stock_alert}
+    onChange={e => setForm({ ...form, low_stock_alert: e.target.value })}
+    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm"
+    placeholder="5" />
+</div>
 
-              </div>
+</div>
 
               <button onClick={handleAddProduct} disabled={saving || !form.name}
                 className="w-full bg-blue-500 text-white font-bold py-3 rounded-2xl mt-4 disabled:opacity-50">
