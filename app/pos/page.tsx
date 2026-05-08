@@ -149,6 +149,14 @@ export default function PosPage() {
   const total = Math.max(0, subtotal - discount - promoDiscount)
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0)
 
+  // คำนวณจำนวนที่ถูกพักบิลไว้แต่ละสินค้า
+const heldQtyMap: { [productId: string]: number } = {}
+heldOrders.forEach(order => {
+  (order.items || []).forEach((item: CartItem) => {
+    heldQtyMap[item.product_id] = (heldQtyMap[item.product_id] || 0) + item.quantity
+  })
+})
+
   const filteredProducts = products
     .filter(p => {
       const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.code?.toLowerCase().includes(search.toLowerCase())
@@ -389,9 +397,16 @@ export default function PosPage() {
                       {promo ? promo.unit_price : product.selling_price}฿
                       {promo && <span className="text-xs text-purple-500 ml-1">🎁</span>}
                     </div>
-                    <div className={`text-xs ${product.stock_qty === 0 ? (preorderMode ? 'text-purple-500 font-bold' : 'text-red-500 font-bold') : 'text-gray-400'}`}>
-                      {product.stock_qty === 0 ? (preorderMode ? '🔮 พรีออเดอร์' : 'หมด') : `เหลือ ${product.stock_qty}`}
-                    </div>
+
+<div className="flex items-center gap-1 flex-wrap">
+  <span className={`text-xs ${product.stock_qty === 0 ? (preorderMode ? 'text-purple-500 font-bold' : 'text-red-500 font-bold') : 'text-gray-400'}`}>
+    {product.stock_qty === 0 ? (preorderMode ? '🔮 พรีออเดอร์' : 'หมด') : `เหลือ ${product.stock_qty}`}
+  </span>
+  {heldQtyMap[product.id] > 0 && (
+    <span className="text-xs text-yellow-600">🔒 {heldQtyMap[product.id]}</span>
+  )}
+</div>
+
                   </div>
                 </button>
               )
