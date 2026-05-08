@@ -45,6 +45,8 @@ export default function PostPage() {
   const [searchProduct, setSearchProduct] = useState('')
   const [tempSelected, setTempSelected] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([])
 
   useEffect(() => { fetchData() }, [])
 
@@ -196,17 +198,50 @@ export default function PostPage() {
     <main className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-md mx-auto">
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/')} className="text-gray-500">← กลับ</button>
-            <h1 className="text-xl font-bold text-gray-800">📢 โพสขาย</h1>
-          </div>
-          <button onClick={() => setShowAddGroup(true)}
-            className="bg-blue-500 text-white text-sm px-3 py-2 rounded-xl">
-            + กรุ๊ป
-          </button>
-        </div>
+
+<div className="flex items-center justify-between mb-4">
+  <div className="flex items-center gap-3">
+    <button onClick={() => router.push('/')} className="text-gray-500">← กลับ</button>
+    <h1 className="text-xl font-bold text-gray-800">📢 โพสขาย</h1>
+  </div>
+  <div className="flex gap-2">
+    {selectMode ? (
+      <>
+        <button
+          onClick={async () => {
+            if (selectedGroupIds.length === 0) return
+            if (!confirm(`ลบ ${selectedGroupIds.length} กรุ๊ปที่เลือก?`)) return
+            await Promise.all(selectedGroupIds.map(id =>
+              supabase.from('post_groups').delete().eq('id', id)
+            ))
+            setSelectMode(false)
+            setSelectedGroupIds([])
+            fetchData()
+          }}
+          disabled={selectedGroupIds.length === 0}
+          className="bg-red-500 text-white text-sm px-3 py-2 rounded-xl disabled:opacity-40">
+          🗑️ ลบ ({selectedGroupIds.length})
+        </button>
+        <button
+          onClick={() => { setSelectMode(false); setSelectedGroupIds([]) }}
+          className="bg-gray-200 text-gray-600 text-sm px-3 py-2 rounded-xl">
+          ยกเลิก
+        </button>
+      </>
+    ) : (
+      <>
+        <button onClick={() => setSelectMode(true)}
+          className="bg-red-100 text-red-500 text-sm px-3 py-2 rounded-xl">
+          🗑️ เลือกลบ
+        </button>
+        <button onClick={() => setShowAddGroup(true)}
+          className="bg-blue-500 text-white text-sm px-3 py-2 rounded-xl">
+          + กรุ๊ป
+        </button>
+      </>
+    )}
+  </div>
+</div>
 
         {loading ? (
           <p className="text-center text-gray-400 py-8">กำลังโหลด...</p>
@@ -222,44 +257,65 @@ export default function PostPage() {
               const isCopied = copiedId === group.id
 
               return (
-                <div key={group.id} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                
+            <div key={group.id}
+              className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all ${
+                selectMode && selectedGroupIds.includes(group.id) ? 'ring-2 ring-red-400' : ''
+              }`}>
 
-                  {/* Group Header - กดเพื่อย่อ/ขยาย */}
-                  <button onClick={() => toggleExpand(group.id)}
-                    className="w-full flex items-center justify-between px-4 py-3 text-left active:bg-gray-50">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-bold text-gray-800">{group.name}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {group.items.length} รายการ
-                        {group.prefix && ` · ตัดคำ: "${group.prefix}"`}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 ml-2">
-                      {/* ปุ่ม copy */}
-                      <button onClick={e => handleCopy(group, e)}
-                        className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                          isCopied ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
-                        }`}>
-                        {isCopied ? '✅' : '📋'}
-                      </button>
-                      {/* ปุ่มแก้ไข */}
-                      <button onClick={e => {
-                        e.stopPropagation()
-                        setEditingGroup(group)
-                        setTempSelected(group.items.map(i => i.product_id))
-                        setShowSelectProducts(false)
-                      }}
-                        className="text-blue-500 text-sm bg-blue-50 px-2 py-1.5 rounded-lg">✏️</button>
-                      {/* ปุ่มลบ */}
-                      <button onClick={e => handleDeleteGroup(group.id, group.name, e)}
-                        className="text-red-400 text-sm bg-red-50 px-2 py-1.5 rounded-lg">🗑️</button>
-                      {/* ลูกศร */}
-                      <span className="text-gray-400 text-sm">{isExpanded ? '▼' : '▶'}</span>
-                    </div>
-                  </button>
+              {/* Group Header */}
+              <div
+                onClick={() => {
+                  if (selectMode) {
+                    setSelectedGroupIds(prev =>
+                      prev.includes(group.id) ? prev.filter(i => i !== group.id) : [...prev, group.id]
+                    )
+                  } else {
+                    toggleExpand(group.id)
+                  }
+                }}
+                className="w-full flex items-center justify-between px-4 py-3 text-left active:bg-gray-50 cursor-pointer">
 
-                  {/* Expanded Content */}
-                  {isExpanded && (
+                {selectMode && (
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mr-3 flex-shrink-0 ${
+                    selectedGroupIds.includes(group.id) ? 'bg-red-500 border-red-500 text-white' : 'border-gray-300'
+                  }`}>
+                    {selectedGroupIds.includes(group.id) && <span className="text-xs">✓</span>}
+                  </div>
+                )}
+
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-gray-800">{group.name}</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {group.items.length} รายการ
+                    {group.prefix && ` · ตัดคำ: "${group.prefix}"`}
+                  </div>
+                </div>
+
+                {!selectMode && (
+                  <div className="flex items-center gap-2 ml-2">
+                    <button onClick={e => handleCopy(group, e)}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                        isCopied ? 'bg-green-500 text-white' : 'bg-blue-500 text-white'
+                      }`}>
+                      {isCopied ? '✅' : '📋'}
+                    </button>
+                    <button onClick={e => {
+                      e.stopPropagation()
+                      setEditingGroup(group)
+                      setTempSelected(group.items.map(i => i.product_id))
+                      setShowSelectProducts(false)
+                    }}
+                      className="text-blue-500 text-sm bg-blue-50 px-2 py-1.5 rounded-lg">✏️</button>
+                    <button onClick={e => handleDeleteGroup(group.id, group.name, e)}
+                      className="text-red-400 text-sm bg-red-50 px-2 py-1.5 rounded-lg">🗑️</button>
+                    <span className="text-gray-400 text-sm">{isExpanded ? '▼' : '▶'}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Expanded Content */}
+              {isExpanded && !selectMode && (
                     <>
                       {/* รายการสินค้า */}
                       {group.items.length === 0 ? (
