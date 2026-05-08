@@ -46,6 +46,8 @@ export default function ParcelsPage() {
   const [problemNote, setProblemNote] = useState('')
   const [showProblemDialog, setShowProblemDialog] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [calendarMonth, setCalendarMonth] = useState(new Date())
+  const [selectedCalDate, setSelectedCalDate] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'parcels' | 'fees'>('parcels')
   const [feeDate, setFeeDate] = useState(new Date().toISOString().split('T')[0])
   const [showConfirmReceive, setShowConfirmReceive] = useState(false)
@@ -116,6 +118,63 @@ const filtered = receipts.filter(r => {
   function getCOD(r: Receipt) {
     return r.stock_receipt_items.reduce((s, i) => s + i.item_cost, 0)
   }
+
+  function getCalDateStr(day: number) {
+  const year = calendarMonth.getFullYear()
+  const month = calendarMonth.getMonth()
+  const mm = String(month + 1).padStart(2, '0')
+  const dd = String(day).padStart(2, '0')
+  return `${year}-${mm}-${dd}`
+}
+
+function getCalDaysInMonth() {
+  const year = calendarMonth.getFullYear()
+  const month = calendarMonth.getMonth()
+  const firstDay = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  return { firstDay, daysInMonth }
+}
+
+function calcCalDayData(dateStr: string) {
+  const dayReceipts = receipts.filter(r => r.order_date?.startsWith(dateStr))
+  const totalFee = dayReceipts.reduce((s, r) => s + (r.service_fee_actual || 0), 0)
+  const receivedReceipts = receipts.filter(r => r.received_at?.startsWith(dateStr))
+  const totalCOD = receivedReceipts.reduce((sum, r) => sum + (r.cod_actual ?? getCOD(r)), 0)
+  return { totalFee, totalCOD, hasData: dayReceipts.length > 0 || receivedReceipts.length > 0 }
+}
+
+function calcSelectedDayDetail(dateStr: string) {
+  const dayReceipts = receipts.filter(r => r.order_date?.startsWith(dateStr))
+  const receivedReceipts = receipts.filter(r => r.received_at?.startsWith(dateStr))
+
+  const byOperator: { [key: string]: { name: string; byCoupon: { couponName: string; fee: number; count: number }[]; total: number } } = {}
+  dayReceipts.forEach(r => {
+    const opId = r.operators?.id || 'unknown'
+    const opName = r.operators?.name || 'ไม่ระบุ'
+    const couponName = r.coupons?.name || 'ไม่ระบุคูปอง'
+    const fee = r.service_fee_actual || 0
+    if (!byOperator[opId]) byOperator[opId] = { name: opName, byCoupon: [], total: 0 }
+    const existing = byOperator[opId].byCoupon.find(c => c.couponName === couponName && c.fee === fee)
+    if (existing) { existing.count++ } else { byOperator[opId].byCoupon.push({ couponName, fee, count: 1 }) }
+    byOperator[opId].total += fee
+  })
+
+  const byPlatform: { [key: string]: { name: string; total: number } } = {}
+  receivedReceipts.forEach(r => {
+    const platId = r.platforms?.id || 'unknown'
+    const platName = r.platforms?.name || 'ไม่ระบุ'
+    const cod = r.cod_actual ?? getCOD(r)
+    if (!byPlatform[platId]) byPlatform[platId] = { name: platName, total: 0 }
+    byPlatform[platId].total += cod
+  })
+
+  return {
+    operators: Object.values(byOperator),
+    platforms: Object.values(byPlatform),
+    grandFee: Object.values(byOperator).reduce((s, op) => s + op.total, 0),
+    grandCOD: Object.values(byPlatform).reduce((s, p) => s + p.total, 0),
+  }
+}
 
   function calcDailyData() {
     const dateReceipts = receipts.filter(r => r.order_date?.startsWith(feeDate))
@@ -377,281 +436,213 @@ const filtered = receipts.filter(r => {
           </>
         )}
 
-        {/* Tab: ค่ากด & COD */}
-        {activeTab === 'fees' && (
-          <div>
-            <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
-              <label className="text-xs text-gray-500">เลือกวันที่</label>
-              <div className="flex gap-2 mt-1">
-                <input type="date" value={feeDate} onChange={e => setFeeDate(e.target.value)}
-                  className="flex-1 border border-gray-200 rounded-xl p-2 text-sm" />
-                <button onClick={() => setFeeDate(today)}
-                  className="bg-indigo-500 text-white text-sm px-3 rounded-xl">วันนี้</button>
-              </div>
-            </div>
+{/* Tab: ค่ากด & COD */}
+{activeTab === 'fees' && (
+  <div>
+    {/* ปฏิทิน */}
+    <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
+      <div className="flex items-center justify-between mb-2">
+        <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
+          className="text-gray-500 text-xl px-2">‹</button>
+        <span className="font-bold text-gray-800 text-sm">
+          {calendarMonth.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}
+        </span>
+        <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
+          className="text-gray-500 text-xl px-2">›</button>
+      </div>
 
-            {(() => {
-              const { fees, grandFeeTotal, receivedCount, totalCODPaid } = calcDailyData()
-              return (
-                <div className="space-y-3">
-                  <div className="bg-white rounded-2xl p-4 shadow-sm">
-                    <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า</h3>
-                    {fees.length === 0 ? (
-                      <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {fees.map((op, i) => (
-                          <div key={i} className="border-b border-gray-100 last:border-0 pb-3 last:pb-0">
-                            <div className="flex justify-between items-center mb-1">
-                              <div className="font-medium text-gray-800 text-sm">👤 {op.name}</div>
-                              <div className="text-xs text-gray-500">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</div>
-                            </div>
-                            {op.byCoupon.map((c, j) => (
-                              <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
-                                <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
-                                <span>{(c.fee * c.count).toLocaleString()}฿</span>
-                              </div>
-                            ))}
-                            <div className="flex justify-between text-sm font-bold text-indigo-600 pt-1 mt-1">
-                              <span>รวม</span>
-                              <span>{op.total.toLocaleString()}฿</span>
-                            </div>
-                          </div>
-                        ))}
-                        <div className="bg-indigo-50 rounded-xl p-3 flex justify-between items-center">
-                          <span className="font-bold text-indigo-700">รวมค่ากดทั้งวัน</span>
-                          <span className="text-xl font-bold text-indigo-600">{grandFeeTotal.toLocaleString()}฿</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+      {/* Day headers */}
+      <div className="grid grid-cols-7 mb-1">
+        {['อา','จ','อ','พ','พฤ','ศ','ส'].map(d => (
+          <div key={d} className="text-center text-xs text-gray-400 py-1">{d}</div>
+        ))}
+      </div>
 
-                  <div className="bg-white rounded-2xl p-4 shadow-sm">
-                    <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง</h3>
-                    {receivedCount === 0 ? (
-                      <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p>
-                    ) : (
-                      <>
-                        <div className="text-xs text-gray-500 mb-2">รับพัสดุ {receivedCount} รายการ</div>
-                        <div className="bg-green-50 rounded-xl p-3 flex justify-between items-center">
-                          <span className="font-bold text-green-700">รวม COD จ่ายไป</span>
-                          <span className="text-xl font-bold text-green-600">{totalCODPaid.toFixed(2)}฿</span>
-                        </div>
-                      </>
-                    )}
-                  </div>
+      {/* Grid */}
+      <div className="grid grid-cols-7 gap-0.5">
+        {Array.from({ length: getCalDaysInMonth().firstDay }).map((_, i) => <div key={`e-${i}`} />)}
+        {Array.from({ length: getCalDaysInMonth().daysInMonth }).map((_, i) => {
+          const day = i + 1
+          const dateStr = getCalDateStr(day)
+          const { totalFee, totalCOD, hasData } = calcCalDayData(dateStr)
+          const isSelected = selectedCalDate === dateStr
+          const isToday = dateStr === today
+
+          return (
+            <button key={day} onClick={() => setSelectedCalDate(isSelected ? null : dateStr)}
+              className={`rounded-xl p-1 min-h-[52px] text-left transition-all ${
+                isSelected ? 'bg-indigo-100 ring-2 ring-indigo-400' :
+                isToday ? 'bg-orange-50 ring-1 ring-orange-300' :
+                hasData ? 'bg-indigo-50' : 'bg-gray-50'
+              }`}>
+              <div className="text-xs font-bold text-right pr-0.5 mb-0.5 text-gray-700">{day}</div>
+              {totalFee > 0 && (
+                <div className="text-center text-xs text-indigo-600 font-medium leading-tight">
+                  {totalFee}
                 </div>
-              )
-            })()}
-          </div>
-        )}
+              )}
+              {totalCOD > 0 && (
+                <div className="text-center text-xs text-green-600 font-medium leading-tight">
+                  {totalCOD.toFixed(0)}
+                </div>
+              )}
+            </button>
+          )
+        })}
+      </div>
 
-        {/* Detail Modal */}
-        {selected && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
-            <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-lg">รายละเอียดพัสดุ</h3>
-                <button onClick={() => setSelected(null)} className="text-gray-400 text-xl">✕</button>
-              </div>
+      {/* Legend */}
+      <div className="flex gap-3 mt-2 pt-2 border-t border-gray-100 text-xs">
+        <span className="text-indigo-600">💵 ค่ากด</span>
+        <span className="text-green-600">💰 COD</span>
+      </div>
+    </div>
 
-              <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-1">
-                <div className="flex justify-between text-sm"><span className="text-gray-500">ชื่อที่สั่ง</span><span className="font-bold">{selected.order_name || '-'}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-500">แพลตฟอร์ม</span><span>{selected.platforms?.name || '-'}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-500">คนกด</span><span>{selected.operators?.name || '-'}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-500">คูปอง</span><span>{selected.coupons?.name || '-'}</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-500">ค่ากด</span><span className="font-bold text-indigo-600">{selected.service_fee_actual?.toFixed(2) || '0'}฿</span></div>
-                <div className="flex justify-between text-sm"><span className="text-gray-500">วันที่สั่ง</span><span>{new Date(selected.order_date).toLocaleDateString('th-TH')}</span></div>
-                {selected.received_at && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">วันที่รับของ</span>
-                    <span className="text-green-600 font-medium">{new Date(selected.received_at).toLocaleDateString('th-TH')}</span>
-                  </div>
-                )}
-                {selected.cod_actual != null && (
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-500">COD จ่ายจริง</span>
-                    <span className="text-green-600 font-bold">{selected.cod_actual.toFixed(2)}฿</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-3">
-                <h4 className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า (เช็คของ)</h4>
-                <div className="space-y-2">
-                  {selected.stock_receipt_items.map(item => (
-                    <div key={item.id} className="bg-gray-50 rounded-xl p-2 flex gap-2 items-center">
-                      <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
-                        {item.products?.image_url ? <img src={item.products.image_url} className="w-full h-full object-contain p-1" /> : <span className="text-xl">🐱</span>}
+    {/* Detail ของวันที่เลือก หรือ picker เดิม */}
+    {selectedCalDate ? (
+      (() => {
+        const d = calcSelectedDayDetail(selectedCalDate)
+        const displayDate = new Date(selectedCalDate + 'T12:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: '2-digit' })
+        return (
+          <div className="space-y-3">
+            <div className="bg-white rounded-2xl p-4 shadow-sm">
+              <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า · {displayDate}</h3>
+              {d.operators.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p>
+              ) : (
+                <div className="space-y-3">
+                  {d.operators.map((op, i) => (
+                    <div key={i} className="border-b border-gray-100 last:border-0 pb-3 last:pb-0">
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="font-medium text-gray-800 text-sm">👤 {op.name}</div>
+                        <div className="text-xs text-gray-500">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium line-clamp-1">{item.products?.name || 'สินค้าถูกลบ'}</div>
-                        <div className="text-xs text-gray-400">ราคา {item.original_price.toFixed(2)}฿</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-lg font-bold text-indigo-600">{item.quantity}</div>
-                        <div className="text-xs text-gray-400">{item.products?.unit}</div>
+                      {op.byCoupon.map((c, j) => (
+                        <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
+                          <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
+                          <span>{(c.fee * c.count).toLocaleString()}฿</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between text-sm font-bold text-indigo-600 pt-1 mt-1">
+                        <span>รวม</span><span>{op.total.toLocaleString()}฿</span>
                       </div>
                     </div>
                   ))}
+                  <div className="bg-indigo-50 rounded-xl p-3 flex justify-between items-center">
+                    <span className="font-bold text-indigo-700">รวมค่ากดทั้งวัน</span>
+                    <span className="text-xl font-bold text-indigo-600">{d.grandFee.toLocaleString()}฿</span>
+                  </div>
                 </div>
-              </div>
+              )}
+            </div>
 
-              <div className="bg-indigo-50 rounded-xl p-3 mb-3 flex justify-between items-center">
-                <span className="font-bold text-indigo-700">💰 ยอด COD ปลายทาง</span>
-                <span className="text-2xl font-bold text-indigo-600">{getCOD(selected).toFixed(2)}฿</span>
-              </div>
+            <div className="bg-white rounded-2xl p-4 shadow-sm">
+              <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง · {displayDate}</h3>
+              {d.platforms.length === 0 ? (
+                <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p>
+              ) : (
+                <div className="space-y-2">
+                  {d.platforms.map((p, i) => (
+                    <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
+                      <span className="text-gray-600">ยอด {p.name}</span>
+                      <span className="font-bold text-green-600">{p.total.toFixed(2)}฿</span>
+                    </div>
+                  ))}
+                  <div className="bg-green-50 rounded-xl p-3 flex justify-between items-center mt-1">
+                    <span className="font-bold text-green-700">รวม COD ทั้งหมด</span>
+                    <span className="text-xl font-bold text-green-600">{d.grandCOD.toFixed(2)}฿</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()
+    ) : (
+      // ไม่ได้เลือกวัน → แสดง picker เดิม
+      <div>
+        <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
+          <label className="text-xs text-gray-500">เลือกวันที่</label>
+          <div className="flex gap-2 mt-1">
+            <input type="date" value={feeDate} onChange={e => setFeeDate(e.target.value)}
+              className="flex-1 border border-gray-200 rounded-xl p-2 text-sm" />
+            <button onClick={() => setFeeDate(today)}
+              className="bg-indigo-500 text-white text-sm px-3 rounded-xl">วันนี้</button>
+          </div>
+        </div>
 
-              {selected.note && <div className="bg-yellow-50 rounded-xl p-3 mb-3"><div className="text-xs text-yellow-700 font-bold mb-1">หมายเหตุ</div><div className="text-sm">{selected.note}</div></div>}
-              {selected.problem_note && <div className="bg-red-50 rounded-xl p-3 mb-3"><div className="text-xs text-red-700 font-bold mb-1">⚠️ ปัญหาที่พบ</div><div className="text-sm">{selected.problem_note}</div></div>}
+        {(() => {
+          const { fees, grandFeeTotal, receivedCount, totalCODPaid } = calcDailyData()
+          // COD by platform สำหรับ feeDate
+          const receivedOnDate = receipts.filter(r => r.received_at?.startsWith(feeDate))
+          const byPlatform: { [key: string]: { name: string; total: number } } = {}
+          receivedOnDate.forEach(r => {
+            const platId = r.platforms?.id || 'unknown'
+            const platName = r.platforms?.name || 'ไม่ระบุ'
+            const cod = r.cod_actual ?? getCOD(r)
+            if (!byPlatform[platId]) byPlatform[platId] = { name: platName, total: 0 }
+            byPlatform[platId].total += cod
+          })
 
-              <div className="space-y-2">
-                <button onClick={() => openEdit(selected)} className="w-full bg-blue-500 text-white font-bold py-3 rounded-2xl">✏️ แก้ไขข้อมูล</button>
-                {selected.status === 'pending' && (
-                  <>
-                    <button onClick={() => startConfirmReceive(selected)} disabled={saving}
-                      className="w-full bg-green-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50">
-                      {saving ? 'กำลังบันทึก...' : '✅ ยืนยันรับสินค้า (เข้าสต็อก)'}
-                    </button>
-                    <button onClick={() => { setShowProblemDialog(true); setProblemNote('') }}
-                      className="w-full bg-red-100 text-red-600 font-bold py-3 rounded-2xl">⚠️ สินค้ามีปัญหา</button>
-                  </>
+          return (
+            <div className="space-y-3">
+              <div className="bg-white rounded-2xl p-4 shadow-sm">
+                <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า</h3>
+                {fees.length === 0 ? (
+                  <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p>
+                ) : (
+                  <div className="space-y-3">
+                    {fees.map((op, i) => (
+                      <div key={i} className="border-b border-gray-100 last:border-0 pb-3 last:pb-0">
+                        <div className="flex justify-between items-center mb-1">
+                          <div className="font-medium text-gray-800 text-sm">👤 {op.name}</div>
+                          <div className="text-xs text-gray-500">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</div>
+                        </div>
+                        {op.byCoupon.map((c, j) => (
+                          <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
+                            <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
+                            <span>{(c.fee * c.count).toLocaleString()}฿</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-sm font-bold text-indigo-600 pt-1 mt-1">
+                          <span>รวม</span><span>{op.total.toLocaleString()}฿</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="bg-indigo-50 rounded-xl p-3 flex justify-between items-center">
+                      <span className="font-bold text-indigo-700">รวมค่ากดทั้งวัน</span>
+                      <span className="text-xl font-bold text-indigo-600">{grandFeeTotal.toLocaleString()}฿</span>
+                    </div>
+                  </div>
                 )}
-                {selected.status !== 'pending' && (
-                  <button onClick={() => revertStatus(selected)} className="w-full bg-yellow-100 text-yellow-700 font-bold py-3 rounded-2xl">↩️ ย้อนสถานะกลับ "กำลังมา"</button>
+              </div>
+
+              <div className="bg-white rounded-2xl p-4 shadow-sm">
+                <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง</h3>
+                {receivedCount === 0 ? (
+                  <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p>
+                ) : (
+                  <div className="space-y-2">
+                    {Object.values(byPlatform).map((p, i) => (
+                      <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
+                        <span className="text-gray-600">ยอด {p.name}</span>
+                        <span className="font-bold text-green-600">{p.total.toFixed(2)}฿</span>
+                      </div>
+                    ))}
+                    <div className="bg-green-50 rounded-xl p-3 flex justify-between items-center mt-1">
+                      <span className="font-bold text-green-700">รวม COD ทั้งหมด</span>
+                      <span className="text-xl font-bold text-green-600">{totalCODPaid.toFixed(2)}฿</span>
+                    </div>
+                  </div>
                 )}
-                <button onClick={() => deleteReceipt(selected.id, selected.order_name)} className="w-full bg-red-100 text-red-600 font-bold py-3 rounded-2xl">🗑️ ลบออเดอร์นี้</button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Confirm Receive Dialog */}
-        {showConfirmReceive && pendingReceive && (
-          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-4 w-full max-w-sm">
-              <h3 className="font-bold mb-1">✅ ยืนยันรับสินค้า</h3>
-              <p className="text-sm text-gray-500 mb-3">{pendingReceive.order_name || 'ไม่ระบุชื่อ'}</p>
-              <div className="bg-gray-50 rounded-xl p-3 mb-3 text-sm space-y-1">
-                <div className="flex justify-between"><span className="text-gray-500">COD ที่คำนวณได้</span><span>{getCOD(pendingReceive).toFixed(2)}฿</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">ค่ากด</span><span className="text-indigo-600 font-bold">{pendingReceive.service_fee_actual?.toFixed(2) || '0'}฿</span></div>
-              </div>
-              <div className="space-y-2 mb-3">
-                <div>
-                  <label className="text-xs text-gray-500">วันที่รับของจริง</label>
-                  <input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">ยอด COD ที่จ่ายจริง (฿)</label>
-                  <input type="number" step="0.01" value={actualCOD} onChange={e => setActualCOD(Number(e.target.value))}
-                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" autoFocus />
-                  <div className="flex gap-2 mt-1.5">
-                    <button onClick={() => setActualCOD(Math.ceil(getCOD(pendingReceive)))}
-                      className="flex-1 bg-gray-100 text-gray-600 py-1.5 rounded-lg text-xs">ปัดขึ้น {Math.ceil(getCOD(pendingReceive))}฿</button>
-                    <button onClick={() => setActualCOD(getCOD(pendingReceive))}
-                      className="flex-1 bg-gray-100 text-gray-600 py-1.5 rounded-lg text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
-                  </div>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => { setShowConfirmReceive(false); setPendingReceive(null) }} className="bg-gray-100 text-gray-600 py-2 rounded-xl">ยกเลิก</button>
-                <button onClick={doConfirmReceive} disabled={saving} className="bg-green-500 text-white py-2 rounded-xl font-bold disabled:opacity-50">
-                  {saving ? 'กำลังบันทึก...' : 'ยืนยัน'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Edit Modal */}
-        {showEdit && selected && (
-          <div className="fixed inset-0 bg-black/50 z-[60] flex items-end">
-            <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-lg">✏️ แก้ไขออเดอร์</h3>
-                <button onClick={() => setShowEdit(false)} className="text-gray-400 text-xl">✕</button>
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs text-gray-500">ชื่อที่สั่ง</label>
-                  <input value={editForm.order_name} onChange={e => setEditForm({...editForm, order_name: e.target.value})}
-                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">วันที่สั่ง</label>
-                  <input type="date" value={editForm.order_date} onChange={e => setEditForm({...editForm, order_date: e.target.value})}
-                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-gray-500">แพลตฟอร์ม</label>
-                    <select value={editForm.platform_id} onChange={e => setEditForm({...editForm, platform_id: e.target.value})}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
-                      <option value="">เลือก</option>
-                      {platforms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500">คนกด</label>
-                    <select value={editForm.operator_id} onChange={e => setEditForm({...editForm, operator_id: e.target.value})}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
-                      <option value="">เลือก</option>
-                      {operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-gray-500">คูปอง</label>
-                    <select value={editForm.coupon_id} onChange={e => setEditForm({...editForm, coupon_id: e.target.value})}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
-                      <option value="">เลือก</option>
-                      {coupons.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500">ค่ากด (฿)</label>
-                    <input type="number" step="0.01" value={editForm.service_fee_actual}
-                      onChange={e => setEditForm({...editForm, service_fee_actual: Number(e.target.value)})}
-                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">เลขพัสดุ</label>
-                  <input value={editForm.tracking_no} onChange={e => setEditForm({...editForm, tracking_no: e.target.value})}
-                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" placeholder="ถ้ามี" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500">หมายเหตุ</label>
-                  <textarea value={editForm.note} onChange={e => setEditForm({...editForm, note: e.target.value})}
-                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" rows={2} />
-                </div>
-              </div>
-              <button onClick={handleSaveEdit} disabled={saving}
-                className="w-full bg-blue-500 text-white font-bold py-3 rounded-2xl mt-4 disabled:opacity-50">
-                {saving ? 'กำลังบันทึก...' : '✅ บันทึกการแก้ไข'}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Problem Dialog */}
-        {showProblemDialog && (
-          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl p-4 w-full max-w-sm">
-              <h3 className="font-bold mb-3">⚠️ สินค้ามีปัญหา</h3>
-              <textarea value={problemNote} onChange={e => setProblemNote(e.target.value)}
-                autoFocus rows={3}
-                className="w-full border border-gray-200 rounded-xl p-2 text-sm mt-1 mb-3"
-                placeholder="เช่น กล่องบุบ, ของไม่ครบ, สินค้าเสียหาย..." />
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setShowProblemDialog(false)} className="bg-gray-100 text-gray-600 py-2 rounded-xl">ยกเลิก</button>
-                <button onClick={markProblem} disabled={!problemNote.trim() || saving} className="bg-red-500 text-white py-2 rounded-xl disabled:opacity-50">บันทึก</button>
-              </div>
-            </div>
-          </div>
-        )}
+          )
+        })()}
+      </div>
+    )}
+  </div>
+)}
 
       </div>
     </main>
