@@ -561,15 +561,6 @@ function calcSelectedDayDetail(dateStr: string) {
     ) : (
       // ไม่ได้เลือกวัน → แสดง picker เดิม
       <div>
-        <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
-          <label className="text-xs text-gray-500">เลือกวันที่</label>
-          <div className="flex gap-2 mt-1">
-            <input type="date" value={feeDate} onChange={e => setFeeDate(e.target.value)}
-              className="flex-1 border border-gray-200 rounded-xl p-2 text-sm" />
-            <button onClick={() => setFeeDate(today)}
-              className="bg-indigo-500 text-white text-sm px-3 rounded-xl">วันนี้</button>
-          </div>
-        </div>
 
         {(() => {
           const { fees, grandFeeTotal, receivedCount, totalCODPaid } = calcDailyData()
@@ -643,6 +634,208 @@ function calcSelectedDayDetail(dateStr: string) {
     )}
   </div>
 )}
+
+{/* Detail Modal */}
+        {selected && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
+            <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-lg">รายละเอียดพัสดุ</h3>
+                <button onClick={() => setSelected(null)} className="text-gray-400 text-xl">✕</button>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-1">
+                <div className="flex justify-between text-sm"><span className="text-gray-500">ชื่อที่สั่ง</span><span className="font-bold">{selected.order_name || '-'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">แพลตฟอร์ม</span><span>{selected.platforms?.name || '-'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">คนกด</span><span>{selected.operators?.name || '-'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">คูปอง</span><span>{selected.coupons?.name || '-'}</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">ค่ากด</span><span className="font-bold text-indigo-600">{selected.service_fee_actual?.toFixed(2) || '0'}฿</span></div>
+                <div className="flex justify-between text-sm"><span className="text-gray-500">วันที่สั่ง</span><span>{new Date(selected.order_date).toLocaleDateString('th-TH')}</span></div>
+                {selected.received_at && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">วันที่รับของ</span>
+                    <span className="text-green-600 font-medium">{new Date(selected.received_at).toLocaleDateString('th-TH')}</span>
+                  </div>
+                )}
+                {selected.cod_actual != null && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-500">COD จ่ายจริง</span>
+                    <span className="text-green-600 font-bold">{selected.cod_actual.toFixed(2)}฿</span>
+                  </div>
+                )}
+              </div>
+              <div className="mb-3">
+                <h4 className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า (เช็คของ)</h4>
+                <div className="space-y-2">
+                  {selected.stock_receipt_items.map(item => (
+                    <div key={item.id} className="bg-gray-50 rounded-xl p-2 flex gap-2 items-center">
+                      <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {item.products?.image_url ? <img src={item.products.image_url} className="w-full h-full object-contain p-1" /> : <span className="text-xl">🐱</span>}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium line-clamp-1">{item.products?.name || 'สินค้าถูกลบ'}</div>
+                        <div className="text-xs text-gray-400">ราคา {item.original_price.toFixed(2)}฿</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-indigo-600">{item.quantity}</div>
+                        <div className="text-xs text-gray-400">{item.products?.unit}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="bg-indigo-50 rounded-xl p-3 mb-3 flex justify-between items-center">
+                <span className="font-bold text-indigo-700">💰 ยอด COD ปลายทาง</span>
+                <span className="text-2xl font-bold text-indigo-600">{getCOD(selected).toFixed(2)}฿</span>
+              </div>
+              {selected.note && <div className="bg-yellow-50 rounded-xl p-3 mb-3"><div className="text-xs text-yellow-700 font-bold mb-1">หมายเหตุ</div><div className="text-sm">{selected.note}</div></div>}
+              {selected.problem_note && <div className="bg-red-50 rounded-xl p-3 mb-3"><div className="text-xs text-red-700 font-bold mb-1">⚠️ ปัญหาที่พบ</div><div className="text-sm">{selected.problem_note}</div></div>}
+              <div className="space-y-2">
+                <button onClick={() => openEdit(selected)} className="w-full bg-blue-500 text-white font-bold py-3 rounded-2xl">✏️ แก้ไขข้อมูล</button>
+                {selected.status === 'pending' && (
+                  <>
+                    <button onClick={() => startConfirmReceive(selected)} disabled={saving}
+                      className="w-full bg-green-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50">
+                      {saving ? 'กำลังบันทึก...' : '✅ ยืนยันรับสินค้า (เข้าสต็อก)'}
+                    </button>
+                    <button onClick={() => { setShowProblemDialog(true); setProblemNote('') }}
+                      className="w-full bg-red-100 text-red-600 font-bold py-3 rounded-2xl">⚠️ สินค้ามีปัญหา</button>
+                  </>
+                )}
+                {selected.status !== 'pending' && (
+                  <button onClick={() => revertStatus(selected)} className="w-full bg-yellow-100 text-yellow-700 font-bold py-3 rounded-2xl">↩️ ย้อนสถานะกลับ "กำลังมา"</button>
+                )}
+                <button onClick={() => deleteReceipt(selected.id, selected.order_name)} className="w-full bg-red-100 text-red-600 font-bold py-3 rounded-2xl">🗑️ ลบออเดอร์นี้</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirm Receive Dialog */}
+        {showConfirmReceive && pendingReceive && (
+          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-4 w-full max-w-sm">
+              <h3 className="font-bold mb-1">✅ ยืนยันรับสินค้า</h3>
+              <p className="text-sm text-gray-500 mb-3">{pendingReceive.order_name || 'ไม่ระบุชื่อ'}</p>
+              <div className="bg-gray-50 rounded-xl p-3 mb-3 text-sm space-y-1">
+                <div className="flex justify-between"><span className="text-gray-500">COD ที่คำนวณได้</span><span>{getCOD(pendingReceive).toFixed(2)}฿</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">ค่ากด</span><span className="text-indigo-600 font-bold">{pendingReceive.service_fee_actual?.toFixed(2) || '0'}฿</span></div>
+              </div>
+              <div className="space-y-2 mb-3">
+                <div>
+                  <label className="text-xs text-gray-500">วันที่รับของจริง</label>
+                  <input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">ยอด COD ที่จ่ายจริง (฿)</label>
+                  <input type="number" step="0.01" value={actualCOD} onChange={e => setActualCOD(Number(e.target.value))}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" autoFocus />
+                  <div className="flex gap-2 mt-1.5">
+                    <button onClick={() => setActualCOD(Math.ceil(getCOD(pendingReceive)))}
+                      className="flex-1 bg-gray-100 text-gray-600 py-1.5 rounded-lg text-xs">ปัดขึ้น {Math.ceil(getCOD(pendingReceive))}฿</button>
+                    <button onClick={() => setActualCOD(getCOD(pendingReceive))}
+                      className="flex-1 bg-gray-100 text-gray-600 py-1.5 rounded-lg text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => { setShowConfirmReceive(false); setPendingReceive(null) }} className="bg-gray-100 text-gray-600 py-2 rounded-xl">ยกเลิก</button>
+                <button onClick={doConfirmReceive} disabled={saving} className="bg-green-500 text-white py-2 rounded-xl font-bold disabled:opacity-50">
+                  {saving ? 'กำลังบันทึก...' : 'ยืนยัน'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Modal */}
+        {showEdit && selected && (
+          <div className="fixed inset-0 bg-black/50 z-[60] flex items-end">
+            <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="font-bold text-lg">✏️ แก้ไขออเดอร์</h3>
+                <button onClick={() => setShowEdit(false)} className="text-gray-400 text-xl">✕</button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs text-gray-500">ชื่อที่สั่ง</label>
+                  <input value={editForm.order_name} onChange={e => setEditForm({...editForm, order_name: e.target.value})}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">วันที่สั่ง</label>
+                  <input type="date" value={editForm.order_date} onChange={e => setEditForm({...editForm, order_date: e.target.value})}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500">แพลตฟอร์ม</label>
+                    <select value={editForm.platform_id} onChange={e => setEditForm({...editForm, platform_id: e.target.value})}
+                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
+                      <option value="">เลือก</option>
+                      {platforms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">คนกด</label>
+                    <select value={editForm.operator_id} onChange={e => setEditForm({...editForm, operator_id: e.target.value})}
+                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
+                      <option value="">เลือก</option>
+                      {operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500">คูปอง</label>
+                    <select value={editForm.coupon_id} onChange={e => setEditForm({...editForm, coupon_id: e.target.value})}
+                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
+                      <option value="">เลือก</option>
+                      {coupons.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">ค่ากด (฿)</label>
+                    <input type="number" step="0.01" value={editForm.service_fee_actual}
+                      onChange={e => setEditForm({...editForm, service_fee_actual: Number(e.target.value)})}
+                      className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">เลขพัสดุ</label>
+                  <input value={editForm.tracking_no} onChange={e => setEditForm({...editForm, tracking_no: e.target.value})}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" placeholder="ถ้ามี" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">หมายเหตุ</label>
+                  <textarea value={editForm.note} onChange={e => setEditForm({...editForm, note: e.target.value})}
+                    className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" rows={2} />
+                </div>
+              </div>
+              <button onClick={handleSaveEdit} disabled={saving}
+                className="w-full bg-blue-500 text-white font-bold py-3 rounded-2xl mt-4 disabled:opacity-50">
+                {saving ? 'กำลังบันทึก...' : '✅ บันทึกการแก้ไข'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Problem Dialog */}
+        {showProblemDialog && (
+          <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-4 w-full max-w-sm">
+              <h3 className="font-bold mb-3">⚠️ สินค้ามีปัญหา</h3>
+              <textarea value={problemNote} onChange={e => setProblemNote(e.target.value)}
+                autoFocus rows={3}
+                className="w-full border border-gray-200 rounded-xl p-2 text-sm mt-1 mb-3"
+                placeholder="เช่น กล่องบุบ, ของไม่ครบ, สินค้าเสียหาย..." />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setShowProblemDialog(false)} className="bg-gray-100 text-gray-600 py-2 rounded-xl">ยกเลิก</button>
+                <button onClick={markProblem} disabled={!problemNote.trim() || saving} className="bg-red-500 text-white py-2 rounded-xl disabled:opacity-50">บันทึก</button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </main>

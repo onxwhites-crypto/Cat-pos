@@ -153,7 +153,7 @@ export default function ProductDetailPage() {
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-500">ต้นทุนเฉลี่ย</span>
-              <span className="text-sm font-medium text-red-500">{product.avg_cost.toFixed(2)}฿</span>
+              <span className="text-sm font-medium text-red-500">{product.avg_cost != null ? product.avg_cost.toFixed(2) : '-'}฿</span>
             </div>
             <div className="flex justify-between">
               <span className="text-sm text-gray-500">กำไรต่อชิ้น</span>
