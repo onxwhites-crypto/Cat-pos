@@ -66,13 +66,15 @@ export default function OrderDetailPopup({
   }
 
   // ── ไปเพิ่มสินค้าในหน้า POS ──
-  function handleAddItems() {
-    localStorage.setItem('pos_editing_order_id', order.id)
-    localStorage.setItem('pos_editing_customer', order.customers?.name || '')
-    localStorage.setItem('pos_editing_customer_id', order.customer_id || '')
-    router.push('/pos')
-    onClose()
-  }
+function handleAddItems() {
+  const params = new URLSearchParams({
+    edit_order_id: order.id,
+    edit_customer: order.customers?.name || '',
+    edit_customer_id: order.customer_id || '',
+  })
+  router.push(`/pos?${params.toString()}`)
+  onClose()
+}
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-end" onClick={onClose}>
