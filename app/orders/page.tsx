@@ -32,6 +32,7 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [searchName, setSearchName] = useState('')
 
   useEffect(() => { fetchOrders() }, [filter, dateFrom, dateTo])
 
@@ -105,6 +106,19 @@ export default function OrdersPage() {
           </button>
           <h1 className="text-lg font-bold text-gray-800">📋 ประวัติการขาย</h1>
         </div>
+        
+{/* Search */}
+<div className="relative">
+  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-sm pointer-events-none">🔍</span>
+  <input
+    value={searchName}
+    onChange={e => setSearchName(e.target.value)}
+    className="w-full bg-white rounded-2xl pl-8 pr-4 py-2.5 text-sm shadow-sm outline-none placeholder-gray-300"
+    placeholder="ค้นหาชื่อลูกค้า..."
+  />
+</div>
+
+{/* Date Filter */}
 
         {/* Filter tabs */}
         <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
@@ -176,7 +190,9 @@ export default function OrdersPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {orders.map(order => (
+            {orders
+      .filter(o => !searchName || o.customers?.name?.toLowerCase().includes(searchName.toLowerCase()))
+      .map(order => (
               <button key={order.id} onClick={() => setSelectedOrder(order)}
                 className="w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-[0.98] transition-transform">
                 <div className="flex justify-between items-start mb-1">
