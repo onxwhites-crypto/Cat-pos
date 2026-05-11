@@ -561,41 +561,41 @@ async function handleHoldOrder() {
         )}
       </div>
 
-      {/* ══ FLOATING CART ══ */}
-      {cartCount > 0 && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center bg-white rounded-full shadow-xl overflow-hidden">
-          <button
-            onClick={() => setShowHoldDialog(true)}
-            className="flex items-center gap-1.5 px-4 py-3.5 text-amber-500 font-semibold text-sm active:scale-95 transition-transform"
-          >
-            📌 พักบิล
-          </button>
-          <div className="w-px h-6 bg-gray-200" />
-          <button
-            onClick={copyCart}
-            className="flex items-center gap-1.5 px-4 py-3.5 text-gray-500 font-semibold text-sm active:scale-95 transition-transform"
-          >
-            📋 คัดลอก
-          </button>
-          <div className="w-px h-6 bg-gray-200" />
-          <button
-
-              onClick={() => setShowCart(true)}
-
-            className="flex items-center gap-2 bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold px-5 py-3.5 text-sm active:scale-95 transition-transform"
-          >
-            🛒 ({cartCount})
-            <span className="bg-white/25 rounded-full px-2 py-0.5 text-xs font-extrabold">
-              {total.toLocaleString()}฿
-            </span>
-          </button>
-        </div>
-      )}
+{/* ══ FLOATING CART ══ */}
+{cartCount > 0 && (
+  <div className="fixed bottom-0 left-0 right-0 z-30 px-4 pb-6 pt-2 bg-gradient-to-t from-[#fff5f3] to-transparent">
+    <div className="flex items-center bg-white rounded-full shadow-xl overflow-hidden">
+      <button
+        onClick={() => setShowHoldDialog(true)}
+        className="flex items-center gap-1.5 px-4 py-4 text-amber-500 font-semibold text-sm active:scale-95 transition-transform"
+      >
+        📌 พักบิล
+      </button>
+      <div className="w-px h-6 bg-gray-200" />
+      <button
+        onClick={copyCart}
+        className="flex items-center gap-1.5 px-4 py-4 text-gray-500 font-semibold text-sm active:scale-95 transition-transform"
+      >
+        📋 คัดลอก
+      </button>
+      <div className="w-px h-6 bg-gray-200" />
+      <button
+        onClick={() => setShowCart(true)}
+        className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold px-5 py-4 text-sm active:scale-95 transition-transform"
+      >
+        🛒 ({cartCount})
+        <span className="bg-white/25 rounded-full px-2.5 py-0.5 text-xs font-extrabold">
+          {total.toLocaleString()}฿
+        </span>
+      </button>
+    </div>
+  </div>
+)}
 
       {/* ══ FLOATING MEMBER BUTTON ══ */}
 <button
   onClick={() => setShowMemberSearch(true)}
-  className="fixed bottom-5 right-4 z-30 w-12 h-12 bg-gradient-to-br from-purple-400 to-fuchsia-500 text-white rounded-full shadow-xl flex items-center justify-center text-xl active:scale-95 transition-transform"
+  className="fixed bottom-24 right-4 z-30 w-12 h-12 bg-gradient-to-br from-purple-400 to-fuchsia-500 text-white rounded-full shadow-xl flex items-center justify-center text-xl active:scale-95 transition-transform"
 >
   👤
 </button>
