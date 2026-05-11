@@ -11,24 +11,24 @@ type Order = {
   total: number
   payment_method: string
   payment_status: string
+  order_type: string | null
   paid_at: string | null
   note: string
   customers: { name: string; phone: string } | null
-
   order_items: {
-  id: string
-  quantity: number
-  unit_price: number
-  total_price: number
-  products: { name: string; unit: string; image_url: string | null; avg_cost: number } | null
-}[]
+    id: string
+    quantity: number
+    unit_price: number
+    total_price: number
+    products: { name: string; unit: string; image_url: string | null; avg_cost: number } | null
+  }[]
 }
 
 export default function OrdersPage() {
   const router = useRouter()
   const [orders, setOrders] = useState<Order[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'paid' | 'pending'>('all')
+  const [filter, setFilter] = useState<'all' | 'paid' | 'pending' | 'reservation'>('all')
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -46,7 +46,10 @@ export default function OrdersPage() {
       `)
       .order('order_date', { ascending: false })
 
-    if (filter !== 'all') query = query.eq('payment_status', filter)
+    if (filter === 'paid') query = query.eq('payment_status', 'paid')
+    else if (filter === 'pending') query = query.eq('payment_status', 'pending')
+    else if (filter === 'reservation') query = query.eq('order_type', 'reservation')
+
     if (dateFrom) query = query.gte('order_date', dateFrom)
     if (dateTo) query = query.lte('order_date', dateTo + 'T23:59:59')
 
@@ -62,300 +65,305 @@ export default function OrdersPage() {
       paid_at: new Date().toISOString(),
     }).eq('id', id)
     fetchOrders()
-    if (selectedOrder?.id === id) {
-      setSelectedOrder(null)
-    }
+    if (selectedOrder?.id === id) setSelectedOrder(null)
   }
 
-async function deleteOrder(id: string) {
-  if (!confirm('ลบบิลนี้? (ไม่สามารถกู้คืนได้)')) return
-
-  try {
-    // คืน stock ก่อน
-    const { data: items } = await supabase
-      .from('order_items')
-      .select('product_id, quantity')
-      .eq('order_id', id)
-
-    if (items && items.length > 0) {
-      for (const item of items) {
-        const { data: p } = await supabase
-          .from('products')
-          .select('stock_qty')
-          .eq('id', item.product_id)
-          .single()
-        if (p) {
-          await supabase.from('products').update({
-            stock_qty: p.stock_qty + item.quantity
-          }).eq('id', item.product_id)
+  async function deleteOrder(id: string) {
+    if (!confirm('ลบบิลนี้? (ไม่สามารถกู้คืนได้)')) return
+    try {
+      const { data: items } = await supabase.from('order_items').select('product_id, quantity').eq('order_id', id)
+      if (items && items.length > 0) {
+        for (const item of items) {
+          const { data: p } = await supabase.from('products').select('stock_qty').eq('id', item.product_id).single()
+          if (p) {
+            await supabase.from('products').update({ stock_qty: p.stock_qty + item.quantity }).eq('id', item.product_id)
+          }
         }
       }
-    }
-
-    // ลบตามลำดับ
-    await supabase.from('stock_movements').delete().eq('ref_id', id).eq('ref_type', 'order')
-    await supabase.from('order_items').delete().eq('order_id', id)
-    await supabase.from('deliveries').delete().eq('order_id', id)
-    await supabase.from('orders').delete().eq('id', id)
-
-    setSelectedOrder(null)
-    fetchOrders()
-  } catch (e) {
-    alert('เกิดข้อผิดพลาดค่ะ')
+      await supabase.from('stock_movements').delete().eq('ref_id', id).eq('ref_type', 'order')
+      await supabase.from('order_items').delete().eq('order_id', id)
+      await supabase.from('deliveries').delete().eq('order_id', id)
+      await supabase.from('orders').delete().eq('id', id)
+      setSelectedOrder(null)
+      fetchOrders()
+    } catch { alert('เกิดข้อผิดพลาดค่ะ') }
   }
-}
 
-  // สรุปยอด
   const totalSales = orders.filter(o => o.payment_status === 'paid').reduce((sum, o) => sum + o.total, 0)
   const totalPending = orders.filter(o => o.payment_status === 'pending').reduce((sum, o) => sum + o.total, 0)
+  const totalReservation = orders.filter(o => o.order_type === 'reservation').length
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-md mx-auto">
+    <main className="min-h-screen bg-[#fff5f3]">
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-4">
-          <button onClick={() => router.push('/')} className="text-gray-500">← กลับ</button>
-          <h1 className="text-xl font-bold text-gray-800">📋 ประวัติการขาย</h1>
+      {/* ══ STICKY HEADER ══ */}
+      <div className="sticky top-0 z-20 bg-[#fff5f3]/95 backdrop-blur-sm px-4 pt-10 pb-3 space-y-2.5">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.push('/')}
+            className="w-9 h-9 rounded-xl bg-white shadow-sm flex items-center justify-center text-sm text-gray-500 active:scale-95 transition-transform">
+            ←
+          </button>
+          <h1 className="text-lg font-bold text-gray-800">📋 ประวัติการขาย</h1>
         </div>
 
+        {/* Filter tabs */}
+        <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
+          {[
+            { key: 'all', label: 'ทั้งหมด' },
+            { key: 'paid', label: '✅ จ่ายแล้ว' },
+            { key: 'pending', label: '⏳ ค้างชำระ' },
+            { key: 'reservation', label: '🏪 ฝากของ' },
+          ].map(btn => (
+            <button key={btn.key} onClick={() => setFilter(btn.key as any)}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-all ${
+                filter === btn.key
+                  ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm'
+                  : 'bg-white text-gray-400 shadow-sm'
+              }`}>
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="px-4 pb-8 space-y-3 pt-2">
+
         {/* Summary */}
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <div className="bg-white rounded-2xl p-3 shadow-sm">
-            <div className="text-xs text-gray-500">ขายแล้ว</div>
-            <div className="text-lg font-bold text-green-500">{totalSales.toLocaleString()}฿</div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-white rounded-2xl p-3 shadow-sm text-center">
+            <p className="text-xs text-gray-400">ขายแล้ว</p>
+            <p className="text-base font-bold text-teal-500">{totalSales.toLocaleString()}฿</p>
           </div>
-          <div className="bg-white rounded-2xl p-3 shadow-sm">
-            <div className="text-xs text-gray-500">ค้างชำระ</div>
-            <div className="text-lg font-bold text-yellow-500">{totalPending.toLocaleString()}฿</div>
+          <div className="bg-white rounded-2xl p-3 shadow-sm text-center">
+            <p className="text-xs text-gray-400">ค้างชำระ</p>
+            <p className="text-base font-bold text-amber-500">{totalPending.toLocaleString()}฿</p>
+          </div>
+          <div className="bg-white rounded-2xl p-3 shadow-sm text-center">
+            <p className="text-xs text-gray-400">ฝากของ</p>
+            <p className="text-base font-bold text-purple-500">{totalReservation} บิล</p>
           </div>
         </div>
 
         {/* Date Filter */}
-        <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
+        <div className="bg-white rounded-2xl p-3 shadow-sm">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="text-xs text-gray-500">ตั้งแต่</label>
+              <label className="text-xs text-gray-400">ตั้งแต่</label>
               <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                className="w-full bg-gray-50 rounded-xl px-3 py-2 text-sm outline-none mt-1" />
             </div>
             <div>
-              <label className="text-xs text-gray-500">ถึง</label>
+              <label className="text-xs text-gray-400">ถึง</label>
               <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-                className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
+                className="w-full bg-gray-50 rounded-xl px-3 py-2 text-sm outline-none mt-1" />
             </div>
           </div>
           {(dateFrom || dateTo) && (
             <button onClick={() => { setDateFrom(''); setDateTo('') }}
-              className="text-xs text-gray-500 mt-2">ล้างวันที่</button>
+              className="text-xs text-gray-400 mt-2 active:scale-95 transition-transform">
+              ✕ ล้างวันที่
+            </button>
           )}
-        </div>
-
-        {/* Filter Tabs */}
-        <div className="flex gap-2 mb-3">
-          <button onClick={() => setFilter('all')}
-            className={`flex-1 py-2 rounded-xl text-sm font-medium ${
-              filter === 'all' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600'
-            }`}>
-            ทั้งหมด
-          </button>
-          <button onClick={() => setFilter('paid')}
-            className={`flex-1 py-2 rounded-xl text-sm font-medium ${
-              filter === 'paid' ? 'bg-green-500 text-white' : 'bg-white text-gray-600'
-            }`}>
-            ✅ จ่ายแล้ว
-          </button>
-          <button onClick={() => setFilter('pending')}
-            className={`flex-1 py-2 rounded-xl text-sm font-medium ${
-              filter === 'pending' ? 'bg-yellow-500 text-white' : 'bg-white text-gray-600'
-            }`}>
-            ⏳ ค้างชำระ
-          </button>
         </div>
 
         {/* Orders List */}
         {loading ? (
-          <p className="text-center text-gray-400 py-8">กำลังโหลด...</p>
+          <p className="text-center text-gray-400 py-8 text-sm">กำลังโหลด...</p>
         ) : orders.length === 0 ? (
           <div className="text-center text-gray-400 py-12">
             <div className="text-4xl mb-2">📋</div>
-            <p>ยังไม่มีบิลค่ะ</p>
+            <p className="text-sm">ยังไม่มีบิลค่ะ</p>
           </div>
         ) : (
           <div className="space-y-2">
             {orders.map(order => (
               <button key={order.id} onClick={() => setSelectedOrder(order)}
-                className="w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-95 transition-transform">
+                className="w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-[0.98] transition-transform">
                 <div className="flex justify-between items-start mb-1">
-                  <div>
-                    <div className="font-medium text-gray-800">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-gray-800 truncate">
                       {order.customers?.name || 'ลูกค้าทั่วไป'}
-                    </div>
-                    <div className="text-xs text-gray-400">
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
                       {new Date(order.order_date).toLocaleString('th-TH', {
                         day: 'numeric', month: 'short', year: '2-digit',
                         hour: '2-digit', minute: '2-digit'
                       })}
+                      {' · '}{order.order_items.length} รายการ
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 ml-2 flex-shrink-0">
+                    {/* badges */}
+                    <div className="flex gap-1 flex-wrap justify-end">
+                      {order.order_type === 'reservation' && (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">
+                          🏪 ฝากของ
+                        </span>
+                      )}
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                        order.payment_status === 'paid'
+                          ? 'bg-teal-100 text-teal-600'
+                          : 'bg-amber-100 text-amber-600'
+                      }`}>
+                        {order.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
+                      </span>
                     </div>
-                  </div>
-                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${
-                    order.payment_status === 'paid'
-                      ? 'bg-green-100 text-green-600'
-                      : 'bg-yellow-100 text-yellow-600'
-                  }`}>
-                    {order.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-end mt-2">
-                  <div className="text-xs text-gray-400">
-                    {order.order_items.length} รายการ
-                    {order.payment_method && ` · ${order.payment_method === 'cash' ? '💵 เงินสด' : '💳 โอน'}`}
-                  </div>
-                  <div className="text-lg font-bold text-orange-500">
-                    {order.total.toLocaleString()}฿
+                    <p className="text-lg font-extrabold text-rose-500">
+                      {order.total.toLocaleString()}฿
+                    </p>
                   </div>
                 </div>
+                {order.payment_method && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {order.payment_method === 'cash' ? '💵 เงินสด' : '💳 โอน'}
+                  </p>
+                )}
               </button>
             ))}
           </div>
         )}
+      </div>
 
-        {/* Order Detail Modal */}
-        {selectedOrder && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
-            <div className="bg-white w-full rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-lg">รายละเอียดบิล</h3>
-                <button onClick={() => setSelectedOrder(null)} className="text-gray-400 text-xl">✕</button>
-              </div>
+      {/* ══ ORDER DETAIL MODAL ══ */}
+      {selectedOrder && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-end">
+          <div className="bg-[#fff5f3] w-full rounded-t-3xl p-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-center pt-1 pb-3"><div className="w-10 h-1 bg-gray-300 rounded-full" /></div>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-lg text-gray-800">รายละเอียดบิล</h3>
+              <button onClick={() => setSelectedOrder(null)} className="text-gray-400 text-xl">✕</button>
+            </div>
 
-              {/* Customer + Status */}
-              <div className="bg-gray-50 rounded-xl p-3 mb-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-medium">{selectedOrder.customers?.name || 'ลูกค้าทั่วไป'}</div>
-                    {selectedOrder.customers?.phone && (
-                      <div className="text-xs text-gray-400">{selectedOrder.customers.phone}</div>
-                    )}
-                    <div className="text-xs text-gray-400 mt-1">
-                      {new Date(selectedOrder.order_date).toLocaleString('th-TH')}
-                    </div>
-                  </div>
-                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+            {/* Customer + Status */}
+            <div className="bg-white rounded-2xl p-3 mb-3 shadow-sm">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="font-bold text-gray-800">{selectedOrder.customers?.name || 'ลูกค้าทั่วไป'}</p>
+                  {selectedOrder.customers?.phone && (
+                    <p className="text-xs text-gray-400">{selectedOrder.customers.phone}</p>
+                  )}
+                  <p className="text-xs text-gray-400 mt-1">
+                    {new Date(selectedOrder.order_date).toLocaleString('th-TH')}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1 items-end">
+                  {selectedOrder.order_type === 'reservation' && (
+                    <span className="text-xs font-semibold px-2 py-1 rounded-full bg-purple-100 text-purple-600">
+                      🏪 ฝากของ
+                    </span>
+                  )}
+                  <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
                     selectedOrder.payment_status === 'paid'
-                      ? 'bg-green-100 text-green-600'
-                      : 'bg-yellow-100 text-yellow-600'
+                      ? 'bg-teal-100 text-teal-600'
+                      : 'bg-amber-100 text-amber-600'
                   }`}>
                     {selectedOrder.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
                   </span>
                 </div>
               </div>
-
-{/* Items */}
-<div className="mb-3">
-  <h4 className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า</h4>
-  <div className="space-y-2">
-    {selectedOrder.order_items.map(item => {
-      const cost = (item.products?.avg_cost || 0) * item.quantity
-      const profit = item.total_price - cost
-      return (
-        <div key={item.id} className="bg-gray-50 rounded-xl p-2">
-          <div className="flex gap-2 items-start">
-            <div className="w-12 h-12 bg-white rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
-              {item.products?.image_url ? (
-                <img src={item.products.image_url} className="w-full h-full object-contain p-1" />
-              ) : (
-                <span className="text-xl">🐱</span>
-              )}
             </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium line-clamp-1">
-                {item.products?.name || 'สินค้าถูกลบ'}
-              </div>
-              <div className="text-xs text-gray-400">
-                {item.quantity} × {item.unit_price}฿ = {item.total_price.toLocaleString()}฿
-              </div>
-              <div className="flex gap-3 text-xs mt-1">
-                <span className="text-gray-500">ทุน {cost.toFixed(2)}฿</span>
-                <span className={profit >= 0 ? 'text-green-600 font-bold' : 'text-red-500 font-bold'}>
-                  กำไร {profit.toFixed(2)}฿
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )
-    })}
-  </div>
-</div>
 
-{/* Summary */}
-{(() => {
-  const totalCost = selectedOrder.order_items.reduce((sum, i) =>
-    sum + (i.products?.avg_cost || 0) * i.quantity, 0)
-  const totalProfit = selectedOrder.total - totalCost
-
-  return (
-    <div className="bg-gray-50 rounded-xl p-3 mb-3">
-      <div className="flex justify-between text-sm">
-        <span className="text-gray-500">ราคารวม</span>
-        <span>{selectedOrder.subtotal.toLocaleString()}฿</span>
-      </div>
-      {selectedOrder.discount > 0 && (
-        <div className="flex justify-between text-sm">
-          <span className="text-gray-500">ส่วนลด</span>
-          <span className="text-green-500">-{selectedOrder.discount.toLocaleString()}฿</span>
-        </div>
-      )}
-      <div className="flex justify-between font-bold text-lg mt-2 pt-2 border-t border-gray-200">
-        <span>รวมทั้งสิ้น</span>
-        <span className="text-orange-500">{selectedOrder.total.toLocaleString()}฿</span>
-      </div>
-      <div className="flex justify-between text-sm mt-2 pt-2 border-t border-gray-200">
-        <span className="text-gray-500">ต้นทุนรวม</span>
-        <span>{totalCost.toFixed(2)}฿</span>
-      </div>
-      <div className="flex justify-between text-sm font-bold">
-        <span className="text-gray-700">กำไรสุทธิ</span>
-        <span className={totalProfit >= 0 ? 'text-green-600' : 'text-red-500'}>
-          {totalProfit.toFixed(2)}฿
-        </span>
-      </div>
-      {selectedOrder.payment_method && (
-        <div className="text-xs text-gray-400 mt-2 text-right">
-          วิธีชำระ: {selectedOrder.payment_method === 'cash' ? '💵 เงินสด' : '💳 โอน'}
-        </div>
-      )}
-    </div>
-  )
-})()}
-
-              {/* Note */}
-              {selectedOrder.note && (
-                <div className="bg-yellow-50 rounded-xl p-3 mb-3">
-                  <div className="text-xs text-yellow-700 font-bold mb-1">หมายเหตุ</div>
-                  <div className="text-sm text-gray-700">{selectedOrder.note}</div>
-                </div>
-              )}
-
-              {/* Actions */}
+            {/* Items */}
+            <div className="mb-3">
+              <p className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า</p>
               <div className="space-y-2">
-                {selectedOrder.payment_status === 'pending' && (
-                  <button onClick={() => markAsPaid(selectedOrder.id)}
-                    className="w-full bg-green-500 text-white font-bold py-3 rounded-xl">
-                    ✅ บันทึกว่าได้รับเงินแล้ว
-                  </button>
-                )}
-                <button onClick={() => deleteOrder(selectedOrder.id)}
-                  className="w-full bg-red-100 text-red-600 font-bold py-3 rounded-xl">
-                  🗑️ ลบบิลนี้
-                </button>
+                {selectedOrder.order_items.map(item => {
+                  const cost = (item.products?.avg_cost || 0) * item.quantity
+                  const profit = item.total_price - cost
+                  return (
+                    <div key={item.id} className="bg-white rounded-2xl p-3 shadow-sm">
+                      <div className="flex gap-3 items-start">
+                        <div className="w-12 h-12 bg-rose-50 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {item.products?.image_url ? (
+                            <img src={item.products.image_url} className="w-full h-full object-contain p-1" />
+                          ) : <span className="text-xl">🐱</span>}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 line-clamp-1">
+                            {item.products?.name || 'สินค้าถูกลบ'}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {item.quantity} × {item.unit_price}฿ = {item.total_price.toLocaleString()}฿
+                          </p>
+                          <div className="flex gap-3 text-xs mt-1">
+                            <span className="text-gray-400">ทุน {cost.toFixed(2)}฿</span>
+                            <span className={profit >= 0 ? 'text-teal-500 font-bold' : 'text-red-500 font-bold'}>
+                              กำไร {profit.toFixed(2)}฿
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
-          </div>
-        )}
 
-      </div>
+            {/* Summary */}
+            {(() => {
+              const totalCost = selectedOrder.order_items.reduce((sum, i) =>
+                sum + (i.products?.avg_cost || 0) * i.quantity, 0)
+              const totalProfit = selectedOrder.total - totalCost
+              return (
+                <div className="bg-white rounded-2xl p-4 mb-3 shadow-sm space-y-1.5">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-400">ราคารวม</span>
+                    <span className="text-gray-700">{selectedOrder.subtotal.toLocaleString()}฿</span>
+                  </div>
+                  {selectedOrder.discount > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">ส่วนลด</span>
+                      <span className="text-teal-500">-{selectedOrder.discount.toLocaleString()}฿</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between font-bold text-lg pt-2 border-t border-gray-50">
+                    <span className="text-gray-800">รวมทั้งสิ้น</span>
+                    <span className="text-rose-500">{selectedOrder.total.toLocaleString()}฿</span>
+                  </div>
+                  <div className="flex justify-between text-sm pt-2 border-t border-gray-50">
+                    <span className="text-gray-400">ต้นทุนรวม</span>
+                    <span className="text-gray-600">{totalCost.toFixed(2)}฿</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold">
+                    <span className="text-gray-700">กำไรสุทธิ</span>
+                    <span className={totalProfit >= 0 ? 'text-teal-500' : 'text-red-500'}>
+                      {totalProfit.toFixed(2)}฿
+                    </span>
+                  </div>
+                  {selectedOrder.payment_method && (
+                    <p className="text-xs text-gray-400 text-right pt-1">
+                      วิธีชำระ: {selectedOrder.payment_method === 'cash' ? '💵 เงินสด' : '💳 โอน'}
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
+
+            {/* Note */}
+            {selectedOrder.note && (
+              <div className="bg-amber-50 rounded-2xl p-3 mb-3">
+                <p className="text-xs text-amber-700 font-bold mb-1">หมายเหตุ</p>
+                <p className="text-sm text-gray-700">{selectedOrder.note}</p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="space-y-2">
+              {selectedOrder.payment_status === 'pending' && (
+                <button onClick={() => markAsPaid(selectedOrder.id)}
+                  className="w-full bg-teal-500 text-white font-bold py-3.5 rounded-2xl active:scale-95 transition-transform">
+                  ✅ บันทึกว่าได้รับเงินแล้ว
+                </button>
+              )}
+              <button onClick={() => deleteOrder(selectedOrder.id)}
+                className="w-full bg-red-50 text-red-400 font-bold py-3.5 rounded-2xl active:scale-95 transition-transform">
+                🗑️ ลบบิลนี้
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </main>
   )
 }

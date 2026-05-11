@@ -268,7 +268,7 @@ if (continueAdd) {
   )
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4">
+    <main className="min-h-screen bg-[#fff5f3] p-4">
       <div className="max-w-md mx-auto">
 
         {/* Header */}
@@ -363,7 +363,7 @@ if (continueAdd) {
           <div className="flex justify-between items-center mb-3">
             <h2 className="font-bold text-gray-700">รายการสินค้า</h2>
             <button onClick={() => setShowProductSearch(true)}
-              className="bg-indigo-500 text-white text-sm px-3 py-1 rounded-xl">
+              className="bg-gradient-to-r from-orange-400 to-rose-400 text-white text-sm px-3 py-1 rounded-xl">
               + เพิ่มสินค้า
             </button>
           </div>
@@ -430,7 +430,7 @@ if (continueAdd) {
                     </div>
                   </div>
                   {selectedCoupon && item.original_price > 0 && (
-                    <div className="mt-2 text-xs text-indigo-500">
+                    <div className="mt-2 text-xs text-rose-400">
                       ต้นทุน/ชิ้น: {item.unit_cost.toFixed(2)}฿
                     </div>
                   )}
@@ -466,7 +466,7 @@ if (continueAdd) {
 
           <div className="flex justify-between font-bold text-xl border-t border-gray-100 pt-3 mt-3">
         <span>ราคาปลายทาง</span>
-        <span className="text-indigo-600">{totalItemCost.toFixed(2)}฿</span>
+        <span className="text-rose-500">{totalItemCost.toFixed(2)}฿</span>
       </div>
 
 
@@ -493,7 +493,7 @@ if (continueAdd) {
   </button>
   <button onClick={() => handleSave(true)}
     disabled={saving || !selectedCoupon || items.length === 0}
-    className="bg-indigo-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
+    className="bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
     {saving ? 'กำลังบันทึก...' : '⚡ บันทึก + บิลใหม่'}
   </button>
 </div>
