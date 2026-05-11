@@ -262,7 +262,7 @@ export default function DeliveryPage() {
       await supabase.from('deliveries').insert({
         order_id: selectedReservation.id,
         zone_id: reserveZoneId || null,
-        scheduled_date: finalDate,
+        scheduled_date: reserveScheduledDate,
         bag_count: reserveBagCount,
         status: 'pending',
         note: selectedReservation.customers?.address || null,
@@ -461,7 +461,6 @@ export default function DeliveryPage() {
                       setReserveScheduledDate(deliveryRounds[0]?.delivery_date || '')
                       setReserveZoneId('')
                       setReserveBagCount(1)
-                      setReserveCustomDate('') 
                     }}
                     className="bg-white rounded-2xl p-4 shadow-sm cursor-pointer active:scale-95 transition-transform border-l-4 border-purple-400">
                     <div className="flex justify-between items-start">
@@ -625,31 +624,18 @@ export default function DeliveryPage() {
               {/* เลือกวันส่ง */}
               <div className="bg-green-50 rounded-xl p-3 mb-3">
                 <label className="text-xs text-green-700 font-bold mb-2 block">📅 เลือกวันส่ง</label>
-
- {deliveryRounds.length > 0 ? (
-  <div className="space-y-2">
-    <select value={reserveScheduledDate} onChange={e => {
-      setReserveScheduledDate(e.target.value)
-      if (e.target.value !== 'custom') setReserveCustomDate('')
-    }}
-      className="w-full border border-green-200 rounded-xl p-2 text-sm bg-white">
-      <option value="">-- เลือกรอบส่ง --</option>
-      {deliveryRounds.map(r => (
-        <option key={r.id} value={r.delivery_date}>
-          🛵 {new Date(r.delivery_date + 'T00:00:00').toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' })}
-          {r.note ? ` — ${r.note}` : ''}
-        </option>
-      ))}
-      <option value="custom">📅 วันอื่น (กำหนดเอง)</option>  {/* ✅ เพิ่ม */}
-    </select>
-    {reserveScheduledDate === 'custom' && (  /* ✅ เพิ่ม block นี้ */
-      <input type="date" value={reserveCustomDate} onChange={e => setReserveCustomDate(e.target.value)}
-        className="w-full border border-green-200 rounded-xl p-2 text-sm bg-white" />
-    )}
-  </div>
-) : (
-
-
+                {deliveryRounds.length > 0 ? (
+                  <select value={reserveScheduledDate} onChange={e => setReserveScheduledDate(e.target.value)}
+                    className="w-full border border-green-200 rounded-xl p-2 text-sm bg-white">
+                    <option value="">-- เลือกรอบส่ง --</option>
+                    {deliveryRounds.map(r => (
+                      <option key={r.id} value={r.delivery_date}>
+                        🛵 {new Date(r.delivery_date + 'T00:00:00').toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' })}
+                        {r.note ? ` — ${r.note}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
                   <input type="date" value={reserveScheduledDate} onChange={e => setReserveScheduledDate(e.target.value)}
                     className="w-full border border-green-200 rounded-xl p-2 text-sm bg-white" />
                 )}
