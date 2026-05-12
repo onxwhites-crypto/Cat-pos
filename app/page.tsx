@@ -17,10 +17,7 @@ export default function Dashboard() {
   useEffect(() => {
     setDateStr(
       new Date().toLocaleDateString('th-TH', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
       })
     )
     fetchDashboard()
@@ -29,7 +26,6 @@ export default function Dashboard() {
   async function fetchDashboard() {
     const today = new Date().toISOString().split('T')[0]
 
-    // ยอดขายวันนี้ + จำนวนบิล
     const { data: sales } = await supabase
       .from('orders')
       .select('total')
@@ -38,14 +34,12 @@ export default function Dashboard() {
     setTodaySales(sales?.reduce((sum, o) => sum + o.total, 0) || 0)
     setTodayBillCount(sales?.length || 0)
 
-    // ออเดอร์รอส่ง
     const { count: deliveries } = await supabase
       .from('deliveries')
       .select('*', { count: 'exact' })
       .eq('status', 'pending')
     setPendingDeliveries(deliveries || 0)
 
-    // สินค้าใกล้หมด
     const { data: products } = await supabase
       .from('products')
       .select('stock_qty, low_stock_alert')
@@ -53,7 +47,6 @@ export default function Dashboard() {
     const low = products?.filter(p => p.stock_qty <= p.low_stock_alert) || []
     setLowStockCount(low.length)
 
-    // ลูกค้าค้างชำระ
     const { data: unpaid } = await supabase
       .from('orders')
       .select('total')
@@ -61,23 +54,23 @@ export default function Dashboard() {
     setUnpaidCount(unpaid?.length || 0)
     setUnpaidTotal(unpaid?.reduce((sum, o) => sum + o.total, 0) || 0)
 
-    // วันที่ลงของ + วันที่ส่งของ (จากหน้าการเงิน)
-    const { data: financeData } = await supabase
-      .from('finance')
-      .select('stock_in_date, stock_out_date')
-      .order('created_at', { ascending: false })
+    // ✅ ดึงรอบลงของล่าสุดจาก delivery_rounds แทน finance table
+    const { data: latestRound } = await supabase
+      .from('delivery_rounds')
+      .select('stock_date, delivery_date')
+      .order('delivery_date', { ascending: false })
       .limit(1)
       .single()
-    if (financeData) {
-      setStockInDate(financeData.stock_in_date)
-      setStockOutDate(financeData.stock_out_date)
+    if (latestRound) {
+      setStockInDate(latestRound.stock_date)
+      setStockOutDate(latestRound.delivery_date)
     }
   }
 
   function formatThaiDate(dateStr: string | null) {
     if (!dateStr) return '-'
-    return new Date(dateStr).toLocaleDateString('th-TH', {
-      day: 'numeric', month: 'short', year: 'numeric'
+    return new Date(dateStr + 'T00:00:00').toLocaleDateString('th-TH', {
+      day: 'numeric', month: 'short',
     })
   }
 
@@ -125,11 +118,8 @@ export default function Dashboard() {
 
         {/* ── Hero Card ── */}
         <div className="mx-4 mb-4 rounded-3xl bg-gradient-to-br from-orange-400 via-rose-400 to-fuchsia-500 p-5 relative overflow-hidden shadow-lg">
-          {/* decorative circles */}
           <div className="absolute -top-8 -right-8 w-32 h-32 bg-white/10 rounded-full" />
           <div className="absolute -bottom-6 left-8 w-20 h-20 bg-white/8 rounded-full" />
-
-          {/* cat mascot */}
           <span className="absolute top-4 right-5 text-4xl drop-shadow-md select-none">🐱</span>
 
           <p className="text-white/80 text-[11px] mb-0.5">ยอดขายวันนี้</p>
@@ -144,11 +134,8 @@ export default function Dashboard() {
             <span>{todayBillCount} บิลวันนี้</span>
           </div>
 
-          {/* POS Button */}
-          <Link
-            href="/pos"
-            className="mt-3 flex items-center justify-between bg-white/20 border border-white/40 rounded-2xl px-4 py-2.5 active:scale-95 transition-transform"
-          >
+          <Link href="/pos"
+            className="mt-3 flex items-center justify-between bg-white/20 border border-white/40 rounded-2xl px-4 py-2.5 active:scale-95 transition-transform">
             <span className="text-white text-[13px] font-semibold">🛒 เริ่มรายของ · POS</span>
             <span className="text-white text-lg">→</span>
           </Link>
@@ -157,11 +144,21 @@ export default function Dashboard() {
         {/* ── Alert Cards ── */}
         <div className="mx-4 mb-4 flex flex-col gap-3">
 
+                    {/* ✅ วันลงของ + วันส่งของ จาก delivery_rounds ล่าสุด */}
+          <Link href="/finance" className="bg-white rounded-2xl px-4 py-3.5 flex gap-3 shadow-sm active:scale-[0.98] transition-transform">
+            <div className="flex-1 border-r border-gray-100 pr-3">
+              <p className="text-[10px] text-gray-400 mb-0.5">📦 วันลงของ</p>
+              <p className="text-[13px] font-bold text-gray-800">{formatThaiDate(stockInDate)}</p>
+            </div>
+            <div className="flex-1 pl-1">
+              <p className="text-[10px] text-gray-400 mb-0.5">🛵 วันส่งของ</p>
+              <p className="text-[13px] font-bold text-gray-800">{formatThaiDate(stockOutDate)}</p>
+            </div>
+          </Link>
+
           {/* รอจัดส่ง */}
           <Link href="/delivery" className="bg-white rounded-2xl px-4 py-3.5 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform">
-            <div className="w-11 h-11 rounded-xl bg-orange-100 flex items-center justify-center text-xl flex-shrink-0">
-              🚚
-            </div>
+            <div className="w-11 h-11 rounded-xl bg-orange-100 flex items-center justify-center text-xl flex-shrink-0">🚚</div>
             <div className="flex-1 min-w-0">
               <p className="text-[11px] text-gray-400">รอจัดส่ง</p>
               <p className="text-[16px] font-bold text-gray-800">{pendingDeliveries} ออเดอร์</p>
@@ -169,11 +166,9 @@ export default function Dashboard() {
             <span className="text-rose-400 text-[12px] font-semibold whitespace-nowrap">ก่อน 12.00 →</span>
           </Link>
 
-          {/* ค้างชำระ */}
-          <Link href="/debts" className="bg-white rounded-2xl px-4 py-3.5 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform">
-            <div className="w-11 h-11 rounded-xl bg-yellow-100 flex items-center justify-center text-xl flex-shrink-0">
-              ₿
-            </div>
+          {/* ✅ ค้างชำระ — link ไป /orders?filter=pending แทน /debts */}
+          <Link href="/orders?filter=pending" className="bg-white rounded-2xl px-4 py-3.5 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform">
+            <div className="w-11 h-11 rounded-xl bg-yellow-100 flex items-center justify-center text-xl flex-shrink-0">₿</div>
             <div className="flex-1 min-w-0">
               <p className="text-[11px] text-gray-400">ค้างชำระ</p>
               <p className="text-[16px] font-bold text-gray-800">฿{unpaidTotal.toLocaleString()}</p>
@@ -181,32 +176,18 @@ export default function Dashboard() {
             <span className="text-amber-500 text-[12px] font-semibold whitespace-nowrap">{unpaidCount} ราย →</span>
           </Link>
 
-          {/* วันที่ลงของ + วันที่ส่งของ */}
-          <div className="bg-white rounded-2xl px-4 py-3.5 flex gap-3 shadow-sm">
-            <div className="flex-1 border-r border-gray-100 pr-3">
-              <p className="text-[10px] text-gray-400 mb-0.5">📅 วันที่ลงของ</p>
-              <p className="text-[13px] font-bold text-gray-800">{formatThaiDate(stockInDate)}</p>
-            </div>
-            <div className="flex-1 pl-1">
-              <p className="text-[10px] text-gray-400 mb-0.5">🚀 วันที่ส่งของ</p>
-              <p className="text-[13px] font-bold text-gray-800">{formatThaiDate(stockOutDate)}</p>
-            </div>
-          </div>
 
         </div>
 
-        {/* ── Menu Grid 13 items ── */}
+        {/* ── Menu Grid ── */}
         <div className="px-4">
           <div className="flex items-center justify-between mb-3">
             <span className="text-[13px] font-bold text-gray-700">🗂️ เมนูหลัก</span>
           </div>
           <div className="grid grid-cols-3 gap-3">
             {menus.map((m) => (
-              <Link
-                key={m.href}
-                href={m.href}
-                className={`bg-gradient-to-br ${m.bg} rounded-2xl p-4 flex flex-col items-start shadow-sm active:scale-95 transition-transform`}
-              >
+              <Link key={m.href} href={m.href}
+                className={`bg-gradient-to-br ${m.bg} rounded-2xl p-4 flex flex-col items-start shadow-sm active:scale-95 transition-transform`}>
                 <span className="text-2xl mb-2 drop-shadow-sm">{m.emoji}</span>
                 <span className="text-white text-[12px] font-bold leading-tight">{m.label}</span>
                 <span className="text-white/70 text-[10px] mt-0.5">{m.sub}</span>

@@ -19,6 +19,8 @@ export default function OrderDetailPopup({
   const [editTab, setEditTab] = useState<'add' | 'pay'>('add')
   const [paidAmount, setPaidAmount] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [editOrderType, setEditOrderType] = useState<'normal' | 'reservation'>((order?.order_type as any) || 'normal')
+  const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>((order?.payment_status as any) || 'pending')
 
   if (!order) return null
 
@@ -49,32 +51,36 @@ export default function OrderDetailPopup({
     setSaving(false)
   }
 
-  // ── บันทึกจ่ายที่เหลือ ──
+  // ── บันทึกแก้ไข ──
   async function handleSavePay() {
-    if (paidAmount <= 0) { alert('กรุณากรอกยอดที่จ่ายค่ะ'); return }
     setSaving(true)
     try {
-      const newStatus = paidAmount >= order.total ? 'paid' : 'pending'
+      let newPaymentStatus = editPaymentStatus
+      // ถ้ากรอกยอดจ่ายด้วย ให้คำนวณสถานะจากยอดจ่าย
+      if (paidAmount > 0) {
+        newPaymentStatus = paidAmount >= order.total ? 'paid' : 'pending'
+      }
       await supabase.from('orders').update({
-        payment_status: newStatus,
-        paid_at: newStatus === 'paid' ? new Date().toISOString() : null,
+        order_type: editOrderType,
+        payment_status: newPaymentStatus,
+        paid_at: newPaymentStatus === 'paid' ? new Date().toISOString() : null,
       }).eq('id', order.id)
-      alert(newStatus === 'paid' ? '✅ จ่ายครบแล้วค่ะ!' : `บันทึกแล้วค่ะ ยังค้างอีก ฿${remaining.toLocaleString()}`)
+      alert('✅ บันทึกเรียบร้อยค่ะ!')
       onUpdated()
     } catch { alert('เกิดข้อผิดพลาดค่ะ') }
     setSaving(false)
   }
 
   // ── ไปเพิ่มสินค้าในหน้า POS ──
-function handleAddItems() {
-  const params = new URLSearchParams({
-    edit_order_id: order.id,
-    edit_customer: order.customers?.name || '',
-    edit_customer_id: order.customer_id || '',
-  })
-  router.push(`/pos?${params.toString()}`)
-  onClose()
-}
+  function handleAddItems() {
+    const params = new URLSearchParams({
+      edit_order_id: order.id,
+      edit_customer: order.customers?.name || '',
+      edit_customer_id: order.customer_id || '',
+    })
+    router.push(`/pos?${params.toString()}`)
+    onClose()
+  }
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-end" onClick={onClose}>
@@ -109,12 +115,16 @@ function handleAddItems() {
           {/* ── VIEW MODE ── */}
           {mode === 'view' && (
             <div className="space-y-3">
-
               {/* สถานะ */}
               <div className="bg-white rounded-2xl px-4 py-3 shadow-sm flex justify-between items-center">
-                <span className={`text-sm font-bold ${order.payment_status === 'paid' ? 'text-teal-500' : 'text-amber-500'}`}>
-                  {order.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
-                </span>
+                <div className="flex gap-2 items-center">
+                  <span className={`text-sm font-bold ${order.payment_status === 'paid' ? 'text-teal-500' : 'text-amber-500'}`}>
+                    {order.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
+                  </span>
+                  {order.order_type === 'reservation' && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">🏪 ฝากของ</span>
+                  )}
+                </div>
                 <span className="text-xl font-extrabold text-rose-500">{order.total?.toLocaleString()}฿</span>
               </div>
 
@@ -129,7 +139,6 @@ function handleAddItems() {
                     <p className="text-sm font-bold text-rose-500">{(item.quantity * item.unit_price).toLocaleString()}฿</p>
                   </div>
                 ))}
-                {/* ยอดรวม */}
                 <div className="flex justify-between items-center px-4 py-3 bg-gray-50">
                   <span className="font-bold text-gray-700">รวมทั้งสิ้น</span>
                   <span className="font-extrabold text-rose-500 text-lg">{order.total?.toLocaleString()}฿</span>
@@ -158,8 +167,6 @@ function handleAddItems() {
           {/* ── EDIT MODE ── */}
           {mode === 'edit' && (
             <div className="space-y-3">
-
-              {/* ปุ่มย้อนกลับ */}
               <button
                 onClick={() => setMode('view')}
                 className="flex items-center gap-1 text-sm text-gray-400 active:scale-95 transition-transform"
@@ -179,7 +186,7 @@ function handleAddItems() {
                   onClick={() => setEditTab('pay')}
                   className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all ${editTab === 'pay' ? 'bg-gradient-to-r from-teal-400 to-green-400 text-white' : 'bg-white text-gray-400 shadow-sm'}`}
                 >
-                  💰 จ่ายที่เหลือ
+                  ✏️ แก้ไขบิล
                 </button>
               </div>
 
@@ -191,12 +198,10 @@ function handleAddItems() {
                     <p className="font-bold text-gray-800">{order.customers?.name || 'ลูกค้าทั่วไป'}</p>
                     <p className="text-xs text-gray-400">{order.order_items?.length || 0} รายการ · {order.total?.toLocaleString()}฿</p>
                   </div>
-
                   <div className="bg-amber-50 rounded-2xl p-4">
                     <p className="text-sm text-amber-700 font-semibold mb-1">📌 วิธีเพิ่มสินค้า</p>
                     <p className="text-xs text-amber-600">กดปุ่มด้านล่างเพื่อกลับไปหน้าขายของ แล้วเลือกสินค้าที่ต้องการเพิ่ม ระบบจะบันทึกเข้าบิลนี้อัตโนมัติค่ะ</p>
                   </div>
-
                   <button
                     onClick={handleAddItems}
                     className="w-full bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-4 rounded-2xl active:scale-95 transition-transform"
@@ -206,29 +211,50 @@ function handleAddItems() {
                 </div>
               )}
 
-              {/* Tab: จ่ายที่เหลือ */}
+              {/* Tab: แก้ไขบิล (ประเภท + สถานะ + จ่ายที่เหลือ) */}
               {editTab === 'pay' && (
                 <div className="space-y-3">
 
-                  {/* ยอดรวม */}
+                  {/* ประเภทการสั่ง */}
+                  <div className="bg-white rounded-2xl p-4 shadow-sm">
+                    <p className="text-xs font-bold text-gray-500 mb-2">ประเภทการสั่ง</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => setEditOrderType('normal')}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${editOrderType === 'normal' ? 'bg-gradient-to-r from-orange-400 to-rose-500 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                        🛒 ขายปกติ
+                      </button>
+                      <button onClick={() => setEditOrderType('reservation')}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${editOrderType === 'reservation' ? 'bg-gradient-to-r from-purple-400 to-fuchsia-500 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                        🏪 ฝากของ
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* สถานะการเงิน */}
+                  <div className="bg-white rounded-2xl p-4 shadow-sm">
+                    <p className="text-xs font-bold text-gray-500 mb-2">สถานะการเงิน</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => setEditPaymentStatus('paid')}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${editPaymentStatus === 'paid' ? 'bg-teal-500 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                        ✅ จ่ายแล้ว
+                      </button>
+                      <button onClick={() => setEditPaymentStatus('pending')}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${editPaymentStatus === 'pending' ? 'bg-amber-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                        ⏳ ค้างชำระ
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ยอดรวม + จ่ายที่เหลือ */}
                   <div className="bg-white rounded-2xl p-4 shadow-sm space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-500">ยอดรวมทั้งหมด</span>
                       <span className="font-bold text-gray-800">{order.total?.toLocaleString()}฿</span>
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">สถานะ</span>
-                      <span className={`font-bold ${order.payment_status === 'paid' ? 'text-teal-500' : 'text-amber-500'}`}>
-                        {order.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
-                      </span>
-                    </div>
                   </div>
 
-                  {/* ช่องกรอกจ่ายมาแล้ว */}
                   <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wide block">
-                      จ่ายมาแล้ว (฿)
-                    </label>
+                    <label className="text-xs font-bold text-gray-500 block">จ่ายมาแล้ว (฿) — ถ้ามี</label>
                     <input
                       type="number"
                       value={paidAmount || ''}
@@ -236,8 +262,6 @@ function handleAddItems() {
                       className="w-full bg-gray-50 rounded-2xl px-4 py-3 text-lg font-bold outline-none text-center"
                       placeholder="0"
                     />
-
-                    {/* คำนวณยอดค้าง */}
                     {paidAmount > 0 && (
                       <div className={`rounded-2xl px-4 py-3 text-center ${remaining <= 0 ? 'bg-teal-50' : 'bg-rose-50'}`}>
                         {remaining <= 0 ? (
@@ -254,10 +278,10 @@ function handleAddItems() {
 
                   <button
                     onClick={handleSavePay}
-                    disabled={saving || paidAmount <= 0}
+                    disabled={saving}
                     className="w-full bg-gradient-to-r from-teal-400 to-green-400 text-white font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-95 transition-transform"
                   >
-                    {saving ? 'กำลังบันทึก...' : '✅ บันทึกการจ่าย'}
+                    {saving ? 'กำลังบันทึก...' : '✅ บันทึก'}
                   </button>
                 </div>
               )}

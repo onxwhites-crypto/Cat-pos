@@ -920,12 +920,27 @@ export default function PosPage() {
         }}
       />
 
-      <OrderDetailPopup
-        order={selectedOrder}
-        onClose={() => setSelectedOrder(null)}
-        onCancelled={() => { setSelectedOrder(null); setShowOrderHistory(true) }}
-        onUpdated={() => { setSelectedOrder(null); setShowOrderHistory(true) }}
-      />
+<OrderDetailPopup
+  order={selectedOrder}
+  onClose={() => setSelectedOrder(null)}
+  onCancelled={() => {
+    setSelectedOrder(null)
+    setShowOrderHistory(false)
+    setTimeout(() => setShowOrderHistory(true), 100)
+  }}
+  onUpdated={async () => {
+    if (selectedOrder) {
+      const { data } = await supabase
+        .from('orders')
+        .select('*, order_items(id, quantity, unit_price, product_id, products(id, name, unit)), customers(name)')
+        .eq('id', selectedOrder.id)
+        .single()
+      if (data) setSelectedOrder(data)
+    }
+    setShowOrderHistory(false)
+    setTimeout(() => setShowOrderHistory(true), 100)
+  }}
+/>
 
     </main>
   )

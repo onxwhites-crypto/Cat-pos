@@ -102,77 +102,59 @@ export default function OrderHistoryPopup({
         style={{ height: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Handle */}
         <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
           <div className="w-10 h-1 bg-gray-300 rounded-full" />
         </div>
 
-        {/* Header */}
         <div className="flex justify-between items-center px-4 py-2 flex-shrink-0">
           <h3 className="font-bold text-gray-800 text-lg">📋 ประวัติบิล</h3>
           <button onClick={onClose} className="text-gray-400 text-xl w-8 h-8 flex items-center justify-center">✕</button>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-2 px-4 mb-3 flex-shrink-0">
-          <button
-            onClick={() => setTab('normal')}
-            className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all ${tab === 'normal' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-400 shadow-sm'}`}
-          >
+          <button onClick={() => setTab('normal')}
+            className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all ${tab === 'normal' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-400 shadow-sm'}`}>
             🧾 ใบเสร็จปกติ
           </button>
-          <button
-            onClick={() => setTab('cancelled')}
-            className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all ${tab === 'cancelled' ? 'bg-gray-500 text-white shadow-sm' : 'bg-white text-gray-400 shadow-sm'}`}
-          >
+          <button onClick={() => setTab('cancelled')}
+            className={`flex-1 py-2.5 rounded-2xl text-sm font-bold transition-all ${tab === 'cancelled' ? 'bg-gray-500 text-white shadow-sm' : 'bg-white text-gray-400 shadow-sm'}`}>
             ❌ ที่ยกเลิก
           </button>
         </div>
 
-        {/* Week calendar */}
         <div className="flex gap-2 px-4 mb-3 overflow-x-auto scrollbar-hide flex-shrink-0 pb-1">
-            {weekDays.map((day, i) => {
+          {weekDays.map((day, i) => {
             const ymd = toYMD(day)
             const isSelected = selectedDate === ymd
             const isYesterday = i === 0
             const isToday = i === 1
             const label = isToday ? 'วันนี้' : isYesterday ? 'เมื่อวาน' : day.toLocaleDateString('th-TH', { weekday: 'short' })
             return (
-                <button
-                key={ymd}
-                onClick={() => setSelectedDate(ymd)}
-                className={`flex-shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all text-center min-w-[48px] ${isSelected ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-500 shadow-sm'}`}
-                >
+              <button key={ymd} onClick={() => setSelectedDate(ymd)}
+                className={`flex-shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all text-center min-w-[48px] ${isSelected ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-500 shadow-sm'}`}>
                 <div>{label}</div>
                 <div className={`text-[10px] font-bold ${isSelected ? 'text-white/80' : 'text-gray-400'}`}>
-                    {day.getDate()}/{day.getMonth() + 1}
+                  {day.getDate()}/{day.getMonth() + 1}
                 </div>
-                </button>
+              </button>
             )
-            })}
-            <button
-            onClick={() => setSelectedDate('')}
-            className={`flex-shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all min-w-[48px] text-center ${selectedDate === '' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-500 shadow-sm'}`}
-            >
+          })}
+          <button onClick={() => setSelectedDate('')}
+            className={`flex-shrink-0 px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all min-w-[48px] text-center ${selectedDate === '' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-500 shadow-sm'}`}>
             <div>ทั้งหมด</div>
             <div className="text-[10px]">·····</div>
-            </button>
+          </button>
         </div>
 
-        {/* Search */}
         <div className="px-4 mb-3 flex-shrink-0">
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300 text-sm pointer-events-none">🔍</span>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+            <input value={search} onChange={e => setSearch(e.target.value)}
               className="w-full bg-white rounded-2xl pl-8 pr-4 py-2.5 text-sm shadow-sm outline-none placeholder-gray-300"
-              placeholder="ค้นหาชื่อลูกค้า..."
-            />
+              placeholder="ค้นหาชื่อลูกค้า..." />
           </div>
         </div>
 
-        {/* Order list */}
         <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-2">
           {loading ? (
             <div className="text-center py-12 text-gray-400 text-sm">กำลังโหลด...</div>
@@ -182,12 +164,9 @@ export default function OrderHistoryPopup({
               <p className="text-gray-400 text-sm">ไม่มีบิลค่ะ</p>
             </div>
           ) : filtered.map(o => (
-            <div
-              key={o.id}
+            <div key={o.id}
               className="bg-white rounded-2xl p-3.5 shadow-sm active:scale-[0.98] transition-transform"
-              onClick={() => onSelectOrder(o)}
-            >
-              {/* Row 1: ชื่อ + ยอด */}
+              onClick={() => onSelectOrder(o)}>
               <div className="flex justify-between items-start mb-1">
                 <p className="font-bold text-sm text-gray-800">
                   {o.customers?.name || 'ลูกค้าทั่วไป'}
@@ -197,8 +176,6 @@ export default function OrderHistoryPopup({
                   {o.total?.toLocaleString()}฿
                 </p>
               </div>
-
-              {/* Row 2: วันที่ เวลา จำนวน + สถานะ */}
               <div className="flex justify-between items-center">
                 <p className="text-xs text-gray-400">
                   {formatThaiDate(o.created_at)} {formatThaiTime(o.created_at)} · {o.order_items?.length || 0} รายการ
@@ -210,24 +187,18 @@ export default function OrderHistoryPopup({
                   {tab === 'cancelled' ? '❌ ยกเลิก' : o.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
                 </span>
               </div>
-
-              {/* ปุ่ม — เฉพาะ normal tab */}
-                {tab === 'normal' && (
+              {tab === 'normal' && (
                 <div className="flex gap-2 mt-2.5" onClick={e => e.stopPropagation()}>
-                    <button
-                    onClick={() => onSelectOrder(o)}
-                    className="bg-gray-50 text-gray-600 px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-transform"
-                    >
+                  <button onClick={() => onSelectOrder(o)}
+                    className="bg-gray-50 text-gray-600 px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-transform">
                     🔍 ดูบิล
-                    </button>
-                    <button
-                    onClick={() => handleCancel(o)}
-                    className="bg-red-50 text-red-400 px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-transform"
-                    >
+                  </button>
+                  <button onClick={() => handleCancel(o)}
+                    className="bg-red-50 text-red-400 px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95 transition-transform">
                     ❌ ยกเลิก
-                    </button>
+                  </button>
                 </div>
-                )}
+              )}
             </div>
           ))}
         </div>
