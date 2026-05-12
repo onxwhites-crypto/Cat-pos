@@ -26,11 +26,12 @@ function formatThaiTime(dateStr: string) {
 }
 
 export default function OrderHistoryPopup({
-  show, onClose, onSelectOrder,
+  show, onClose, onSelectOrder, onUpdated,
 }: {
   show: boolean
   onClose: () => void
   onSelectOrder: (order: any) => void
+  onUpdated?: () => void
 }) {
   const [tab, setTab] = useState<'normal' | 'cancelled'>('normal')
   const [orders, setOrders] = useState<any[]>([])
@@ -85,6 +86,7 @@ export default function OrderHistoryPopup({
       }
       await supabase.from('orders').update({ status: 'cancelled' }).eq('id', order.id)
       fetchOrders()
+      onUpdated?.()
       alert('ยกเลิกบิลเรียบร้อยค่ะ')
     } catch { alert('เกิดข้อผิดพลาดค่ะ') }
   }

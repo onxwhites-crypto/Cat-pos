@@ -1,9 +1,10 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import OrderHistoryPopup from '@/components/OrderHistoryPopup'
 import OrderDetailPopup from '@/components/OrderDetailPopup'
+
 
 type Product = {
   id: string; name: string; code: string; unit: string
@@ -27,7 +28,7 @@ type HeldOrder = {
 }
 type DeliveryRound = { id: string; stock_date: string; delivery_date: string; note: string | null }
 
-export default function PosPage() {
+function PosPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -920,27 +921,6 @@ export default function PosPage() {
         }}
       />
 
-<OrderDetailPopup
-  order={selectedOrder}
-  onClose={() => setSelectedOrder(null)}
-  onCancelled={() => {
-    setSelectedOrder(null)
-    setShowOrderHistory(false)
-    setTimeout(() => setShowOrderHistory(true), 100)
-  }}
-  onUpdated={async () => {
-    if (selectedOrder) {
-      const { data } = await supabase
-        .from('orders')
-        .select('*, order_items(id, quantity, unit_price, product_id, products(id, name, unit)), customers(name)')
-        .eq('id', selectedOrder.id)
-        .single()
-      if (data) setSelectedOrder(data)
-    }
-    setShowOrderHistory(false)
-    setTimeout(() => setShowOrderHistory(true), 100)
-  }}
-/>
 
     </main>
   )
