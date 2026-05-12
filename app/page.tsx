@@ -34,11 +34,16 @@ export default function Dashboard() {
     setTodaySales(sales?.reduce((sum, o) => sum + o.total, 0) || 0)
     setTodayBillCount(sales?.length || 0)
 
-    const { count: deliveries } = await supabase
-      .from('deliveries')
-      .select('*', { count: 'exact' })
-      .eq('status', 'pending')
-    setPendingDeliveries(deliveries || 0)
+const { count: deliveries, data: deliveryData } = await supabase
+  .from('deliveries')
+  .select('*', { count: 'exact' })
+  .eq('status', 'packed')
+  .lte('scheduled_date', today)
+
+console.log('today:', today)
+console.log('deliveries count:', deliveries)
+console.log('deliveries data:', deliveryData)
+setPendingDeliveries(deliveries || 0)  
 
     const { data: products } = await supabase
       .from('products')
