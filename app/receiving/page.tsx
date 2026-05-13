@@ -205,12 +205,15 @@ function selectCoupon(coupon: Coupon) {
 
   // ราคาสินค้ารวม = ดึงราคามาเลย ไม่ × จำนวน
   const totalOriginalPrice = items.reduce((sum, i) => sum + i.original_price, 0)
-  const totalItemCost = items.reduce((sum, i) => sum + i.item_cost, 0)
-  const actualFee = selectedCoupon ? calcServiceFee(selectedCoupon, manualFee) : 0
-  const totalCOD = totalItemCost + actualFee
+  const totalItemCost = selectedCoupon
+  ? items.reduce((sum, i) => sum + i.item_cost, 0)
+  : totalOriginalPrice
+
+const actualFee = selectedCoupon ? calcServiceFee(selectedCoupon, manualFee) : 0
+const totalCOD = selectedCoupon ? totalItemCost + actualFee : totalOriginalPrice
 
 async function handleSave(continueAdd: boolean = false) {
-  if (!selectedCoupon || items.length === 0) return
+  if (items.length === 0) return
   setSaving(true)
     try {
       const { data: receipt, error } = await supabase
@@ -218,7 +221,7 @@ async function handleSave(continueAdd: boolean = false) {
         .insert({
           platform_id: platformId || null,
           operator_id: operatorId || null,
-          coupon_id: selectedCoupon.id,
+          coupon_id: selectedCoupon?.id || null,
           order_name: orderName,
           order_date: orderDate,
           service_fee_actual: actualFee,
@@ -325,12 +328,27 @@ if (continueAdd) {
               <div>
                 <label className="text-xs text-gray-500">คูปอง</label>
                 <select value={selectedCoupon?.id || ''}
-                  onChange={e => {
-                    const coupon = coupons.find(c => c.id === e.target.value)
-                    if (coupon) selectCoupon(coupon)
-                  }}
+
+              onChange={e => {
+                if (e.target.value === 'none') {
+                  setSelectedCoupon(null)
+                  setManualFee(0)
+                  // ล้าง item_cost ให้ = original_price
+                  setItems(prev => prev.map(i => ({
+                    ...i,
+                    item_cost: i.original_price,
+                    service_fee_share: 0,
+                    unit_cost: i.quantity > 0 ? i.original_price / i.quantity : 0,
+                  })))
+                  return
+                }
+                const coupon = coupons.find(c => c.id === e.target.value)
+                if (coupon) selectCoupon(coupon)
+              }}
+
                   className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
                   <option value="">เลือกคูปอง</option>
+                  <option value="none">🛒 ไม่มีคูปอง / สั่งเอง</option>
                   {filteredCoupons.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
@@ -429,11 +447,13 @@ if (continueAdd) {
                         className="w-full border border-gray-200 rounded-lg p-1 text-sm mt-1" />
                     </div>
                   </div>
-                  {selectedCoupon && item.original_price > 0 && (
-                    <div className="mt-2 text-xs text-rose-400">
-                      ต้นทุน/ชิ้น: {item.unit_cost.toFixed(2)}฿
-                    </div>
-                  )}
+
+                  {item.original_price > 0 && item.quantity > 0 && (
+                  <div className="mt-2 text-xs text-rose-400">
+                  ต้นทุน/ชิ้น: {selectedCoupon ? item.unit_cost.toFixed(2) : (item.original_price / item.quantity).toFixed(2)}฿
+                  </div>
+                )}
+
                 </div>
               ))}
             </div>
@@ -441,7 +461,7 @@ if (continueAdd) {
         </div>
 
 {/* สรุปราคา */}
-{items.length > 0 && selectedCoupon && (
+{items.length > 0 && (
   <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
     <h2 className="font-bold text-gray-700 mb-3">สรุปราคา</h2>
     <div className="space-y-2 text-sm">
@@ -450,8 +470,8 @@ if (continueAdd) {
         <span>{totalOriginalPrice.toFixed(2)}฿</span>
       </div>
       <div className="flex justify-between">
-        <span className="text-gray-500">ส่วนลด ({selectedCoupon.name})</span>
-        <span className="text-green-500">-{(selectedCoupon.display_value || selectedCoupon.discount_value).toFixed(2)}฿</span>
+        <span className="text-gray-500">ส่วนลด {selectedCoupon ? `(${selectedCoupon.name})` : ''}</span>
+        <span className="text-green-500">-{selectedCoupon ? (selectedCoupon.display_value || selectedCoupon.discount_value).toFixed(2) : '0.00'}฿</span>
       </div>
       <div className="flex justify-between">
         <span className="text-gray-500">ค่ากดของ</span>
@@ -487,12 +507,12 @@ if (continueAdd) {
 {/* Save buttons */}
 <div className="grid grid-cols-2 gap-2 mb-8">
   <button onClick={() => handleSave(false)}
-    disabled={saving || !selectedCoupon || items.length === 0}
+    disabled={saving || items.length === 0}
     className="bg-gray-200 text-gray-700 font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
     {saving ? 'กำลังบันทึก...' : '✅ บันทึก'}
   </button>
   <button onClick={() => handleSave(true)}
-    disabled={saving || !selectedCoupon || items.length === 0}
+    disabled={saving || items.length === 0}
     className="bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
     {saving ? 'กำลังบันทึก...' : '⚡ บันทึก + บิลใหม่'}
   </button>

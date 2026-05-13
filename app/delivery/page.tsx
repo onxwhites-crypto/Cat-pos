@@ -168,36 +168,21 @@ export default function DeliveryPage() {
     setAllDeliveries(allD || [])
   }
 
-  async function markAsDelivered(delivery: Delivery) {
-    await supabase.from('deliveries').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('id', delivery.id)
-    const items = delivery.orders?.order_items || []
-    for (const item of items) {
-      const { data: product } = await supabase.from('products').select('stock_qty').eq('id', item.product_id).single()
-      if (product) {
-        await supabase.from('products').update({ stock_qty: product.stock_qty - item.quantity }).eq('id', item.product_id)
-        await supabase.from('stock_movements').insert({ product_id: item.product_id, type: 'OUT', quantity: item.quantity, ref_type: 'delivery', ref_id: delivery.id })
-      }
-    }
-    fetchData()
-    setSelectedDelivery(null)
-  }
+async function markAsDelivered(delivery: Delivery) {
+  await supabase.from('deliveries')
+    .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+    .eq('id', delivery.id)
+  fetchData()
+  setSelectedDelivery(null)
+}
 
-  async function markAsPending(delivery: Delivery) {
-    const wasDelivered = delivery.status === 'delivered'
-    await supabase.from('deliveries').update({ status: 'pending', delivered_at: null }).eq('id', delivery.id)
-    if (wasDelivered) {
-      const items = delivery.orders?.order_items || []
-      for (const item of items) {
-        const { data: product } = await supabase.from('products').select('stock_qty').eq('id', item.product_id).single()
-        if (product) {
-          await supabase.from('products').update({ stock_qty: product.stock_qty + item.quantity }).eq('id', item.product_id)
-          await supabase.from('stock_movements').insert({ product_id: item.product_id, type: 'IN', quantity: item.quantity, ref_type: 'delivery_cancel', ref_id: delivery.id })
-        }
-      }
-    }
-    fetchData()
-    setSelectedDelivery(null)
-  }
+async function markAsPending(delivery: Delivery) {
+  await supabase.from('deliveries')
+    .update({ status: 'pending', delivered_at: null })
+    .eq('id', delivery.id)
+  fetchData()
+  setSelectedDelivery(null)
+}
 
   async function updateScheduledDate(id: string, date: string) {
     await supabase.from('deliveries').update({ scheduled_date: date }).eq('id', id)
@@ -672,7 +657,7 @@ export default function DeliveryPage() {
               {selectedDelivery.status === 'delivered' && (
                 <button onClick={() => markAsPending(selectedDelivery)}
                   className="w-full bg-white text-amber-600 font-bold py-3.5 rounded-2xl shadow-sm active:scale-95 transition-transform">
-                  ↩️ ยกเลิกการส่ง (คืน Stock)
+                  ↩️ ยกเลิกการส่ง
                 </button>
               )}
             </div>
