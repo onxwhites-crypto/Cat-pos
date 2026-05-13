@@ -50,7 +50,7 @@ export default function StockPage() {
   async function fetchData() {
     const [{ data: p }, { data: c }] = await Promise.all([
       supabase.from('products').select('*, categories(name)').eq('is_active', true).order('name'),
-      supabase.from('categories').select('*').order('name'),
+      supabase.from('categories').select('*').order('sort_order', { ascending: true }),
     ])
     setProducts(p || [])
     setCategories(c || [])

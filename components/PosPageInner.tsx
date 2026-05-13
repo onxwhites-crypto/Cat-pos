@@ -101,10 +101,10 @@ function PosPageInner() {
     const today = new Date().toISOString().split('T')[0]
     const [{ data: p }, { data: cat }, { data: c }, { data: h }, { data: z }, { data: promo }, { data: rounds }] = await Promise.all([
       supabase.from('products').select('*, categories(name)').eq('is_active', true).order('name'),
-      supabase.from('categories').select('*').order('name'),
+      supabase.from('categories').select('*').order('sort_order', { ascending: true }),
       supabase.from('customers').select('*').order('name'),
       supabase.from('held_orders').select('*').order('created_at', { ascending: false }),
-      supabase.from('zones').select('*').order('name'),
+      supabase.from('zones').select('*').order('sort_order', { ascending: true }),
       supabase.from('promotions').select('*, promotion_products(product_id)').eq('is_active', true),
       supabase.from('delivery_rounds').select('*').gte('delivery_date', today).order('delivery_date', { ascending: true }),
     ])
