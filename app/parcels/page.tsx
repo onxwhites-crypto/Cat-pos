@@ -121,9 +121,13 @@ export default function ParcelsPage() {
   const receivedToday = receipts.filter(r => r.status === 'received' && r.received_at?.startsWith(today)).length
   const overdueCount = receipts.filter(r => r.status === 'pending' && r.order_date < sevenDaysAgoStr).length
 
-  function getCOD(r: Receipt) {
-    return r.stock_receipt_items.reduce((s, i) => s + i.item_cost, 0)
-  }
+      function getCOD(r: Receipt) {
+        return r.stock_receipt_items.reduce((s, i) => {
+          // ถ้าไม่มีคูปอง (item_cost = 0) ให้ใช้ original_price แทนค่ะ
+          const cost = i.item_cost > 0 ? i.item_cost : i.original_price
+          return s + cost
+        }, 0)
+      }
 
   function getCalDateStr(day: number) {
     const year = calendarMonth.getFullYear()
