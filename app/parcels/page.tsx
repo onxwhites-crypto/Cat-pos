@@ -14,6 +14,7 @@ type Receipt = {
   received_at: string | null
   problem_note: string | null
   note: string | null
+  payment_type: string | null
   platforms: { id: string; name: string } | null
   operators: { id: string; name: string } | null
   coupons: { id: string; name: string; discount_value: number } | null
@@ -54,13 +55,13 @@ export default function ParcelsPage() {
   const [actualCOD, setActualCOD] = useState(0)
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split('T')[0])
   const [pendingReceive, setPendingReceive] = useState<Receipt | null>(null)
+  const [paymentType, setPaymentType] = useState<'prepaid' | 'installment'>('prepaid')
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState({
     order_name: '', order_date: '', platform_id: '', operator_id: '',
     coupon_id: '', service_fee_actual: 0, note: '', tracking_no: '',
   })
 
-  // ── Edit Items ──
   const [showEditItems, setShowEditItems] = useState(false)
   const [editItems, setEditItems] = useState<{ id: string; product_id: string; product_name: string; product_unit: string; product_image: string | null; quantity: number; original_price: number }[]>([])
   const [showSearchProduct, setShowSearchProduct] = useState(false)
@@ -121,13 +122,19 @@ export default function ParcelsPage() {
   const receivedToday = receipts.filter(r => r.status === 'received' && r.received_at?.startsWith(today)).length
   const overdueCount = receipts.filter(r => r.status === 'pending' && r.order_date < sevenDaysAgoStr).length
 
-      function getCOD(r: Receipt) {
-        return r.stock_receipt_items.reduce((s, i) => {
-          // ถ้าไม่มีคูปอง (item_cost = 0) ให้ใช้ original_price แทนค่ะ
-          const cost = i.item_cost > 0 ? i.item_cost : i.original_price
-          return s + cost
-        }, 0)
-      }
+  function getCOD(r: Receipt) {
+    return r.stock_receipt_items.reduce((s, i) => {
+      // ✅ ถ้ามีคูปอง ใช้ item_cost เสมอ (แม้จะเป็น 0 ก็ตาม)
+      // ถ้าไม่มีคูปอง ใช้ original_price
+      const cost = r.coupons ? i.item_cost : i.original_price
+      return s + cost
+    }, 0)
+  }
+
+  // ✅ เช็คว่าเป็นออเดอร์สั่งเอง (ไม่มีคูปอง)
+  function isSelfOrder(r: Receipt) {
+    return !r.coupons && r.service_fee_actual === 0
+  }
 
   function getCalDateStr(day: number) {
     const year = calendarMonth.getFullYear()
@@ -237,7 +244,6 @@ export default function ParcelsPage() {
     if (!selected) return
     setSaving(true)
     try {
-      // อัปเดตทีละรายการ
       for (const item of editItems) {
         if (item.id) {
           await supabase.from('stock_receipt_items').update({
@@ -245,7 +251,6 @@ export default function ParcelsPage() {
             original_price: item.original_price,
           }).eq('id', item.id)
         } else {
-          // รายการใหม่
           await supabase.from('stock_receipt_items').insert({
             receipt_id: selected.id,
             product_id: item.product_id,
@@ -300,6 +305,8 @@ export default function ParcelsPage() {
     setPendingReceive(receipt)
     setActualCOD(getCOD(receipt))
     setReceivedDate(today)
+    // ✅ default = prepaid (จ่ายแล้ว) สำหรับสั่งเอง
+    setPaymentType('prepaid')
     setShowConfirmReceive(true)
   }
 
@@ -307,27 +314,54 @@ export default function ParcelsPage() {
     if (!pendingReceive) return
     setSaving(true)
     try {
+      const isSelf = isSelfOrder(pendingReceive)
+      const finalCOD = isSelf ? 0 : actualCOD
+      const finalPaymentType = isSelf ? paymentType : 'cod'
+
       await supabase.from('stock_receipts').update({
         status: 'received',
         received_at: new Date(receivedDate + 'T12:00:00').toISOString(),
-        cod_actual: actualCOD,
+        cod_actual: finalCOD,
+        payment_type: finalPaymentType,
       }).eq('id', pendingReceive.id)
 
+      // เพิ่ม stock
       for (const item of pendingReceive.stock_receipt_items) {
         if (!item.products) continue
         const { data: product } = await supabase.from('products').select('stock_qty, avg_cost').eq('id', item.products.id).single()
         if (product) {
           const newQty = product.stock_qty + item.quantity
-          const newAvgCost = ((product.stock_qty * product.avg_cost) + (item.quantity * item.unit_cost)) / newQty
+          const unitCost = item.unit_cost > 0 ? item.unit_cost : (item.original_price / item.quantity)
+          const newAvgCost = ((product.stock_qty * product.avg_cost) + (item.quantity * unitCost)) / newQty
           await supabase.from('products').update({ stock_qty: newQty, avg_cost: newAvgCost }).eq('id', item.products.id)
           await supabase.from('stock_movements').insert({
             product_id: item.products.id, type: 'IN', quantity: item.quantity,
-            unit_cost: item.unit_cost, ref_type: 'receipt', ref_id: pendingReceive.id,
+            unit_cost: unitCost, ref_type: 'receipt', ref_id: pendingReceive.id,
           })
         }
       }
 
-      alert('รับพัสดุเรียบร้อย! สินค้าเข้าสต็อกแล้วค่ะ')
+      // ✅ บันทึกรายจ่ายอัตโนมัติ ถ้าสั่งเองและจ่ายแล้ว (prepaid)
+      if (isSelf && paymentType === 'prepaid') {
+        const totalCost = pendingReceive.stock_receipt_items.reduce((s, i) => s + i.original_price, 0)
+        if (totalCost > 0) {
+          await supabase.from('expenses').insert({
+            date: receivedDate,
+            amount: totalCost,
+            category: 'ต้นทุนสินค้า',
+            note: `รับพัสดุ: ${pendingReceive.order_name || 'ไม่ระบุชื่อ'}`,
+            stream: 'capital',
+          })
+        }
+      }
+
+      alert(
+        isSelf && paymentType === 'prepaid'
+          ? 'รับพัสดุเรียบร้อย! บันทึกรายจ่ายให้อัตโนมัติแล้วค่ะ ✅'
+          : isSelf && paymentType === 'installment'
+          ? 'รับพัสดุเรียบร้อย! อย่าลืมบันทึกหนี้สินด้วยนะคะ 💳'
+          : 'รับพัสดุเรียบร้อย! สินค้าเข้าสต็อกแล้วค่ะ'
+      )
       setShowConfirmReceive(false); setPendingReceive(null); setSelected(null); fetchData()
     } catch { alert('เกิดข้อผิดพลาดค่ะ') }
     setSaving(false)
@@ -341,12 +375,10 @@ export default function ParcelsPage() {
     fetchData(); setSaving(false)
   }
 
-  // ── ย้อนสถานะ + หักสต็อกคืน ──
   async function revertStatus(receipt: Receipt) {
     if (!confirm('ย้อนสถานะกลับเป็น "กำลังมา"? สต็อกที่เพิ่มไปจะถูกหักออกด้วยค่ะ')) return
     setSaving(true)
     try {
-      // หักสต็อกคืน (เฉพาะ received)
       if (receipt.status === 'received') {
         for (const item of receipt.stock_receipt_items) {
           if (!item.products) continue
@@ -359,9 +391,11 @@ export default function ParcelsPage() {
             })
           }
         }
+        // ✅ ลบ expense ที่บันทึกไปด้วย (ถ้ามี)
+        await supabase.from('expenses').delete().eq('note', `รับพัสดุ: ${receipt.order_name || 'ไม่ระบุชื่อ'}`)
       }
       await supabase.from('stock_receipts').update({
-        status: 'pending', received_at: null, problem_note: null, cod_actual: null
+        status: 'pending', received_at: null, problem_note: null, cod_actual: null, payment_type: null
       }).eq('id', receipt.id)
       setSelected(null); fetchData()
       alert('ย้อนสถานะเรียบร้อยค่ะ')
@@ -384,16 +418,12 @@ export default function ParcelsPage() {
     <main className="min-h-screen bg-[#fff5f3] p-4">
       <div className="max-w-md mx-auto">
 
-        {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <button onClick={() => router.push('/')}
-            className="w-9 h-9 rounded-xl bg-white shadow-sm flex items-center justify-center text-sm text-gray-500 active:scale-95 transition-transform">
-            ←
-          </button>
+            className="w-9 h-9 rounded-xl bg-white shadow-sm flex items-center justify-center text-sm text-gray-500 active:scale-95 transition-transform">←</button>
           <h1 className="text-lg font-bold text-gray-800">📥 รับพัสดุ</h1>
         </div>
 
-        {/* Dashboard */}
         <div className="grid grid-cols-4 gap-2 mb-3">
           <div className="bg-white rounded-2xl p-2 shadow-sm text-center">
             <div className="text-xs text-gray-400">สั่งวันนี้</div>
@@ -413,7 +443,6 @@ export default function ParcelsPage() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="grid grid-cols-2 gap-2 mb-3">
           <button onClick={() => setActiveTab('parcels')}
             className={`py-2.5 rounded-2xl text-sm font-bold transition-all ${activeTab === 'parcels' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
@@ -425,7 +454,6 @@ export default function ParcelsPage() {
           </button>
         </div>
 
-        {/* Tab: พัสดุ */}
         {activeTab === 'parcels' && (
           <>
             <div className="bg-white rounded-2xl p-3 shadow-sm mb-3 space-y-2">
@@ -453,9 +481,7 @@ export default function ParcelsPage() {
               </div>
               {(filterOrderDate || filterReceivedDate) && (
                 <button onClick={() => { setFilterOrderDate(''); setFilterReceivedDate('') }}
-                  className="w-full bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">
-                  ✕ ล้างตัวกรองวันที่
-                </button>
+                  className="w-full bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">✕ ล้างตัวกรองวันที่</button>
               )}
             </div>
 
@@ -467,15 +493,18 @@ export default function ParcelsPage() {
                 { key: 'problem', label: '⚠️ มีปัญหา' },
               ].map(btn => (
                 <button key={btn.key} onClick={() => setFilterStatus(btn.key as any)}
-                  className={`flex-1 min-w-fit py-2 px-3 rounded-2xl text-xs font-semibold whitespace-nowrap transition-all ${
-                    filterStatus === btn.key
-                      ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm'
-                      : 'bg-white text-gray-500 shadow-sm'
-                  }`}>
+                  className={`flex-1 min-w-fit py-2 px-3 rounded-2xl text-xs font-semibold whitespace-nowrap transition-all ${filterStatus === btn.key ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white shadow-sm' : 'bg-white text-gray-500 shadow-sm'}`}>
                   {btn.label}
                 </button>
               ))}
             </div>
+
+{/* ✅ รวมจำนวนบิล */}
+<div className="flex justify-between items-center px-1">
+  <span className="text-xs text-gray-400">รวม</span>
+  <span className="text-xs text-gray-400">{filtered.length} บิล</span>
+</div>
+
 
             {loading ? (
               <p className="text-center text-gray-400 py-8 text-sm">กำลังโหลด...</p>
@@ -501,12 +530,18 @@ export default function ParcelsPage() {
                             {r.received_at && ` · รับ ${new Date(r.received_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}`}
                           </p>
                         </div>
-                        <span className={`text-xs font-bold px-2 py-1 rounded-full ml-2 flex-shrink-0 ${
-                          r.status === 'received' ? 'bg-teal-100 text-teal-600' :
-                          r.status === 'problem' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
-                        }`}>
-                          {r.status === 'received' ? '✅' : r.status === 'problem' ? '⚠️' : '⏳'}
-                        </span>
+                        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                          {/* ✅ badge บอก payment type */}
+                          {r.payment_type === 'installment' && (
+                            <span className="text-xs font-bold px-2 py-1 rounded-full bg-purple-100 text-purple-600">💳 ผ่อน</span>
+                          )}
+                          {r.payment_type === 'prepaid' && (
+                            <span className="text-xs font-bold px-2 py-1 rounded-full bg-teal-100 text-teal-600">✅ จ่ายแล้ว</span>
+                          )}
+                          <span className={`text-xs font-bold px-2 py-1 rounded-full ${r.status === 'received' ? 'bg-teal-100 text-teal-600' : r.status === 'problem' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                            {r.status === 'received' ? '✅' : r.status === 'problem' ? '⚠️' : '⏳'}
+                          </span>
+                        </div>
                       </div>
                       <div className="flex justify-between items-center text-sm">
                         <span className="text-rose-500 font-bold">💰 {cod.toFixed(2)}฿</span>
@@ -516,11 +551,7 @@ export default function ParcelsPage() {
                         {r.stock_receipt_items.length} รายการ · {totalItems} ชิ้น
                         {r.service_fee_actual > 0 && ` · ค่ากด ${r.service_fee_actual}฿`}
                       </div>
-                      {isOverdue && (
-                        <p className="text-xs text-red-500 font-bold mt-1">
-                          ⚠️ ค้างมา {Math.ceil((Date.now() - new Date(r.order_date).getTime()) / (1000 * 60 * 60 * 24))} วัน
-                        </p>
-                      )}
+                      {isOverdue && <p className="text-xs text-red-500 font-bold mt-1">⚠️ ค้างมา {Math.ceil((Date.now() - new Date(r.order_date).getTime()) / (1000 * 60 * 60 * 24))} วัน</p>}
                     </button>
                   )
                 })}
@@ -529,23 +560,16 @@ export default function ParcelsPage() {
           </>
         )}
 
-        {/* Tab: ค่ากด & COD */}
         {activeTab === 'fees' && (
           <div>
             <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
               <div className="flex items-center justify-between mb-2">
-                <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
-                  className="text-gray-400 text-xl px-2">‹</button>
-                <span className="font-bold text-gray-800 text-sm">
-                  {calendarMonth.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}
-                </span>
-                <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
-                  className="text-gray-400 text-xl px-2">›</button>
+                <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} className="text-gray-400 text-xl px-2">‹</button>
+                <span className="font-bold text-gray-800 text-sm">{calendarMonth.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' })}</span>
+                <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} className="text-gray-400 text-xl px-2">›</button>
               </div>
               <div className="grid grid-cols-7 mb-1">
-                {['อา','จ','อ','พ','พฤ','ศ','ส'].map(d => (
-                  <div key={d} className="text-center text-xs text-gray-400 py-1">{d}</div>
-                ))}
+                {['อา','จ','อ','พ','พฤ','ศ','ส'].map(d => <div key={d} className="text-center text-xs text-gray-400 py-1">{d}</div>)}
               </div>
               <div className="grid grid-cols-7 gap-0.5">
                 {Array.from({ length: getCalDaysInMonth().firstDay }).map((_, i) => <div key={`e-${i}`} />)}
@@ -557,11 +581,7 @@ export default function ParcelsPage() {
                   const isToday = dateStr === today
                   return (
                     <button key={day} onClick={() => setSelectedCalDate(isSelected ? null : dateStr)}
-                      className={`rounded-xl p-1 min-h-[52px] text-left transition-all ${
-                        isSelected ? 'bg-rose-100 ring-2 ring-rose-400' :
-                        isToday ? 'bg-orange-50 ring-1 ring-orange-300' :
-                        hasData ? 'bg-rose-50' : 'bg-gray-50'
-                      }`}>
+                      className={`rounded-xl p-1 min-h-[52px] text-left transition-all ${isSelected ? 'bg-rose-100 ring-2 ring-rose-400' : isToday ? 'bg-orange-50 ring-1 ring-orange-300' : hasData ? 'bg-rose-50' : 'bg-gray-50'}`}>
                       <div className="text-xs font-bold text-right pr-0.5 mb-0.5 text-gray-700">{day}</div>
                       {totalFee > 0 && <div className="text-center text-xs text-rose-500 font-medium leading-tight">{totalFee}</div>}
                       {totalCOD > 0 && <div className="text-center text-xs text-teal-600 font-medium leading-tight">{totalCOD.toFixed(0)}</div>}
@@ -575,133 +595,115 @@ export default function ParcelsPage() {
               </div>
             </div>
 
-            {selectedCalDate ? (
-              (() => {
-                const d = calcSelectedDayDetail(selectedCalDate)
-                const displayDate = new Date(selectedCalDate + 'T12:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: '2-digit' })
-                return (
-                  <div className="space-y-3">
-                    <div className="bg-white rounded-2xl p-4 shadow-sm">
-                      <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า · {displayDate}</h3>
-                      {d.operators.length === 0 ? (
-                        <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p>
-                      ) : (
-                        <div className="space-y-3">
-                          {d.operators.map((op, i) => (
-                            <div key={i} className="border-b border-gray-50 last:border-0 pb-3 last:pb-0">
-                              <div className="flex justify-between items-center mb-1">
-                                <p className="font-medium text-gray-800 text-sm">👤 {op.name}</p>
-                                <p className="text-xs text-gray-400">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</p>
-                              </div>
-                              {op.byCoupon.map((c, j) => (
-                                <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
-                                  <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
-                                  <span>{(c.fee * c.count).toLocaleString()}฿</span>
-                                </div>
-                              ))}
-                              <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1">
-                                <span>รวม</span><span>{op.total.toLocaleString()}฿</span>
-                              </div>
+            {selectedCalDate ? (() => {
+              const d = calcSelectedDayDetail(selectedCalDate)
+              const displayDate = new Date(selectedCalDate + 'T12:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: '2-digit' })
+              return (
+                <div className="space-y-3">
+                  <div className="bg-white rounded-2xl p-4 shadow-sm">
+                    <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า · {displayDate}</h3>
+                    {d.operators.length === 0 ? <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p> : (
+                      <div className="space-y-3">
+                        {d.operators.map((op, i) => (
+                          <div key={i} className="border-b border-gray-50 last:border-0 pb-3 last:pb-0">
+                            <div className="flex justify-between items-center mb-1">
+                              <p className="font-medium text-gray-800 text-sm">👤 {op.name}</p>
+                              <p className="text-xs text-gray-400">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</p>
                             </div>
-                          ))}
-                          <div className="bg-rose-50 rounded-2xl p-3 flex justify-between items-center">
-                            <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
-                            <span className="text-xl font-bold text-rose-600">{d.grandFee.toLocaleString()}฿</span>
+                            {op.byCoupon.map((c, j) => (
+                              <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
+                                <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
+                                <span>{(c.fee * c.count).toLocaleString()}฿</span>
+                              </div>
+                            ))}
+                            <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1"><span>รวม</span><span>{op.total.toLocaleString()}฿</span></div>
                           </div>
+                        ))}
+                        <div className="bg-rose-50 rounded-2xl p-3 flex justify-between items-center">
+                          <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
+                          <span className="text-xl font-bold text-rose-600">{d.grandFee.toLocaleString()}฿</span>
                         </div>
-                      )}
-                    </div>
-                    <div className="bg-white rounded-2xl p-4 shadow-sm">
-                      <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง · {displayDate}</h3>
-                      {d.platforms.length === 0 ? (
-                        <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {d.platforms.map((p, i) => (
-                            <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
-                              <span className="text-gray-600">ยอด {p.name}</span>
-                              <span className="font-bold text-teal-600">{p.total.toFixed(2)}฿</span>
-                            </div>
-                          ))}
-                          <div className="bg-teal-50 rounded-2xl p-3 flex justify-between items-center mt-1">
-                            <span className="font-bold text-teal-700">รวม COD ทั้งหมด</span>
-                            <span className="text-xl font-bold text-teal-600">{d.grandCOD.toFixed(2)}฿</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                )
-              })()
-            ) : (
-              <div>
-                {(() => {
-                  const { fees, grandFeeTotal, receivedCount, totalCODPaid } = calcDailyData()
-                  const receivedOnDate = receipts.filter(r => r.received_at?.startsWith(feeDate))
-                  const byPlatform: { [key: string]: { name: string; total: number } } = {}
-                  receivedOnDate.forEach(r => {
-                    const platId = r.platforms?.id || 'unknown'
-                    const platName = r.platforms?.name || 'ไม่ระบุ'
-                    const cod = r.cod_actual ?? getCOD(r)
-                    if (!byPlatform[platId]) byPlatform[platId] = { name: platName, total: 0 }
-                    byPlatform[platId].total += cod
-                  })
-                  return (
-                    <div className="space-y-3">
-                      <div className="bg-white rounded-2xl p-4 shadow-sm">
-                        <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า</h3>
-                        {fees.length === 0 ? (
-                          <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p>
-                        ) : (
-                          <div className="space-y-3">
-                            {fees.map((op, i) => (
-                              <div key={i} className="border-b border-gray-50 last:border-0 pb-3 last:pb-0">
-                                <div className="flex justify-between items-center mb-1">
-                                  <p className="font-medium text-gray-800 text-sm">👤 {op.name}</p>
-                                  <p className="text-xs text-gray-400">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</p>
-                                </div>
-                                {op.byCoupon.map((c, j) => (
-                                  <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
-                                    <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
-                                    <span>{(c.fee * c.count).toLocaleString()}฿</span>
-                                  </div>
-                                ))}
-                                <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1">
-                                  <span>รวม</span><span>{op.total.toLocaleString()}฿</span>
-                                </div>
+                  <div className="bg-white rounded-2xl p-4 shadow-sm">
+                    <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง · {displayDate}</h3>
+                    {d.platforms.length === 0 ? <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p> : (
+                      <div className="space-y-2">
+                        {d.platforms.map((p, i) => (
+                          <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
+                            <span className="text-gray-600">ยอด {p.name}</span>
+                            <span className="font-bold text-teal-600">{p.total.toFixed(2)}฿</span>
+                          </div>
+                        ))}
+                        <div className="bg-teal-50 rounded-2xl p-3 flex justify-between items-center mt-1">
+                          <span className="font-bold text-teal-700">รวม COD ทั้งหมด</span>
+                          <span className="text-xl font-bold text-teal-600">{d.grandCOD.toFixed(2)}฿</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })() : (() => {
+              const { fees, grandFeeTotal, receivedCount, totalCODPaid } = calcDailyData()
+              const receivedOnDate = receipts.filter(r => r.received_at?.startsWith(feeDate))
+              const byPlatform: { [key: string]: { name: string; total: number } } = {}
+              receivedOnDate.forEach(r => {
+                const platId = r.platforms?.id || 'unknown'
+                const platName = r.platforms?.name || 'ไม่ระบุ'
+                const cod = r.cod_actual ?? getCOD(r)
+                if (!byPlatform[platId]) byPlatform[platId] = { name: platName, total: 0 }
+                byPlatform[platId].total += cod
+              })
+              return (
+                <div className="space-y-3">
+                  <div className="bg-white rounded-2xl p-4 shadow-sm">
+                    <h3 className="font-bold text-gray-700 mb-3">💵 ค่ากดสินค้า</h3>
+                    {fees.length === 0 ? <p className="text-gray-400 text-sm text-center py-2">ไม่มีข้อมูลค่ะ</p> : (
+                      <div className="space-y-3">
+                        {fees.map((op, i) => (
+                          <div key={i} className="border-b border-gray-50 last:border-0 pb-3 last:pb-0">
+                            <div className="flex justify-between items-center mb-1">
+                              <p className="font-medium text-gray-800 text-sm">👤 {op.name}</p>
+                              <p className="text-xs text-gray-400">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</p>
+                            </div>
+                            {op.byCoupon.map((c, j) => (
+                              <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
+                                <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
+                                <span>{(c.fee * c.count).toLocaleString()}฿</span>
                               </div>
                             ))}
-                            <div className="bg-rose-50 rounded-2xl p-3 flex justify-between items-center">
-                              <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
-                              <span className="text-xl font-bold text-rose-600">{grandFeeTotal.toLocaleString()}฿</span>
-                            </div>
+                            <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1"><span>รวม</span><span>{op.total.toLocaleString()}฿</span></div>
                           </div>
-                        )}
+                        ))}
+                        <div className="bg-rose-50 rounded-2xl p-3 flex justify-between items-center">
+                          <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
+                          <span className="text-xl font-bold text-rose-600">{grandFeeTotal.toLocaleString()}฿</span>
+                        </div>
                       </div>
-                      <div className="bg-white rounded-2xl p-4 shadow-sm">
-                        <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง</h3>
-                        {receivedCount === 0 ? (
-                          <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {Object.values(byPlatform).map((p, i) => (
-                              <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
-                                <span className="text-gray-600">ยอด {p.name}</span>
-                                <span className="font-bold text-teal-600">{p.total.toFixed(2)}฿</span>
-                              </div>
-                            ))}
-                            <div className="bg-teal-50 rounded-2xl p-3 flex justify-between items-center mt-1">
-                              <span className="font-bold text-teal-700">รวม COD ทั้งหมด</span>
-                              <span className="text-xl font-bold text-teal-600">{totalCODPaid.toFixed(2)}฿</span>
-                            </div>
+                    )}
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 shadow-sm">
+                    <h3 className="font-bold text-gray-700 mb-3">💰 COD จ่ายจริง</h3>
+                    {receivedCount === 0 ? <p className="text-gray-400 text-sm text-center py-2">ไม่มีการรับพัสดุวันนี้ค่ะ</p> : (
+                      <div className="space-y-2">
+                        {Object.values(byPlatform).map((p, i) => (
+                          <div key={i} className="flex justify-between text-sm py-1 border-b border-gray-50 last:border-0">
+                            <span className="text-gray-600">ยอด {p.name}</span>
+                            <span className="font-bold text-teal-600">{p.total.toFixed(2)}฿</span>
                           </div>
-                        )}
+                        ))}
+                        <div className="bg-teal-50 rounded-2xl p-3 flex justify-between items-center mt-1">
+                          <span className="font-bold text-teal-700">รวม COD ทั้งหมด</span>
+                          <span className="text-xl font-bold text-teal-600">{totalCODPaid.toFixed(2)}฿</span>
+                        </div>
                       </div>
-                    </div>
-                  )
-                })()}
-              </div>
-            )}
+                    )}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
 
@@ -714,8 +716,6 @@ export default function ParcelsPage() {
                 <h3 className="font-bold text-lg text-gray-800">รายละเอียดพัสดุ</h3>
                 <button onClick={() => setSelected(null)} className="text-gray-400 text-xl">✕</button>
               </div>
-
-              {/* ข้อมูล */}
               <div className="bg-white rounded-2xl p-3 mb-3 space-y-1.5 shadow-sm">
                 {[
                   ['ชื่อที่สั่ง', selected.order_name || '-'],
@@ -725,6 +725,7 @@ export default function ParcelsPage() {
                   ['ค่ากด', `${selected.service_fee_actual?.toFixed(2) || '0'}฿`],
                   ['วันที่สั่ง', new Date(selected.order_date).toLocaleDateString('th-TH')],
                   ...(selected.received_at ? [['วันที่รับของ', new Date(selected.received_at).toLocaleDateString('th-TH')]] : []),
+                  ...(selected.payment_type ? [['การชำระ', selected.payment_type === 'prepaid' ? '✅ จ่ายแล้ว' : selected.payment_type === 'installment' ? '💳 ผ่อน' : 'COD']] : []),
                   ...(selected.cod_actual != null ? [['COD จ่ายจริง', `${selected.cod_actual.toFixed(2)}฿`]] : []),
                 ].map(([label, value], i) => (
                   <div key={i} className="flex justify-between text-sm">
@@ -733,8 +734,6 @@ export default function ParcelsPage() {
                   </div>
                 ))}
               </div>
-
-              {/* สินค้า */}
               <div className="mb-3">
                 <p className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า</p>
                 <div className="space-y-2">
@@ -755,73 +754,33 @@ export default function ParcelsPage() {
                   ))}
                 </div>
               </div>
-
-              {/* COD */}
               <div className="bg-rose-50 rounded-2xl p-3 mb-3 flex justify-between items-center">
                 <span className="font-bold text-rose-700">💰 ยอด COD ปลายทาง</span>
                 <span className="text-2xl font-bold text-rose-600">{getCOD(selected).toFixed(2)}฿</span>
               </div>
-
-              {selected.note && (
-                <div className="bg-amber-50 rounded-2xl p-3 mb-3">
-                  <p className="text-xs text-amber-700 font-bold mb-1">หมายเหตุ</p>
-                  <p className="text-sm">{selected.note}</p>
-                </div>
-              )}
-              {selected.problem_note && (
-                <div className="bg-red-50 rounded-2xl p-3 mb-3">
-                  <p className="text-xs text-red-700 font-bold mb-1">⚠️ ปัญหาที่พบ</p>
-                  <p className="text-sm">{selected.problem_note}</p>
-                </div>
-              )}
-
-              {/* ปุ่ม */}
+              {selected.note && <div className="bg-amber-50 rounded-2xl p-3 mb-3"><p className="text-xs text-amber-700 font-bold mb-1">หมายเหตุ</p><p className="text-sm">{selected.note}</p></div>}
+              {selected.problem_note && <div className="bg-red-50 rounded-2xl p-3 mb-3"><p className="text-xs text-red-700 font-bold mb-1">⚠️ ปัญหาที่พบ</p><p className="text-sm">{selected.problem_note}</p></div>}
               <div className="space-y-2">
-                {/* แก้ไขข้อมูล + แก้ไขสินค้า */}
                 <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => openEdit(selected)}
-                    className="bg-gradient-to-r from-orange-400 to-rose-400 text-white font-bold py-3 rounded-2xl text-sm active:scale-95 transition-transform">
-                    ✏️ แก้ไขข้อมูล
-                  </button>
-                  <button onClick={() => openEditItems(selected)}
-                    className="bg-white text-rose-500 font-bold py-3 rounded-2xl text-sm shadow-sm active:scale-95 transition-transform">
-                    🛒 แก้ไขสินค้า
-                  </button>
+                  <button onClick={() => openEdit(selected)} className="bg-gradient-to-r from-orange-400 to-rose-400 text-white font-bold py-3 rounded-2xl text-sm active:scale-95">✏️ แก้ไขข้อมูล</button>
+                  <button onClick={() => openEditItems(selected)} className="bg-white text-rose-500 font-bold py-3 rounded-2xl text-sm shadow-sm active:scale-95">🛒 แก้ไขสินค้า</button>
                 </div>
-
-                {/* pending: ยืนยันรับ */}
                 {selected.status === 'pending' && (
                   <button onClick={() => startConfirmReceive(selected)} disabled={saving}
-                    className="w-full bg-teal-500 text-white font-bold py-3 rounded-2xl text-sm disabled:opacity-50 active:scale-95 transition-transform">
+                    className="w-full bg-teal-500 text-white font-bold py-3 rounded-2xl text-sm disabled:opacity-50 active:scale-95">
                     {saving ? 'กำลังบันทึก...' : '✅ ยืนยันรับสินค้า (เข้าสต็อก)'}
                   </button>
                 )}
-
-                {/* pending: มีปัญหา + ลบ */}
                 {selected.status === 'pending' && (
                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => { setShowProblemDialog(true); setProblemNote('') }}
-                      className="bg-amber-50 text-amber-600 font-bold py-3 rounded-2xl text-sm active:scale-95 transition-transform">
-                      ⚠️ มีปัญหา
-                    </button>
-                    <button onClick={() => deleteReceipt(selected.id, selected.order_name)}
-                      className="bg-red-50 text-red-400 font-bold py-3 rounded-2xl text-sm active:scale-95 transition-transform">
-                      🗑️ ลบออเดอร์
-                    </button>
+                    <button onClick={() => { setShowProblemDialog(true); setProblemNote('') }} className="bg-amber-50 text-amber-600 font-bold py-3 rounded-2xl text-sm active:scale-95">⚠️ มีปัญหา</button>
+                    <button onClick={() => deleteReceipt(selected.id, selected.order_name)} className="bg-red-50 text-red-400 font-bold py-3 rounded-2xl text-sm active:scale-95">🗑️ ลบออเดอร์</button>
                   </div>
                 )}
-
-                {/* received/problem: ย้อนสถานะ + ลบ */}
                 {selected.status !== 'pending' && (
                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => revertStatus(selected)} disabled={saving}
-                      className="bg-amber-50 text-amber-600 font-bold py-3 rounded-2xl text-sm disabled:opacity-50 active:scale-95 transition-transform">
-                      ↩️ ย้อนสถานะ
-                    </button>
-                    <button onClick={() => deleteReceipt(selected.id, selected.order_name)}
-                      className="bg-red-50 text-red-400 font-bold py-3 rounded-2xl text-sm active:scale-95 transition-transform">
-                      🗑️ ลบออเดอร์
-                    </button>
+                    <button onClick={() => revertStatus(selected)} disabled={saving} className="bg-amber-50 text-amber-600 font-bold py-3 rounded-2xl text-sm disabled:opacity-50 active:scale-95">↩️ ย้อนสถานะ</button>
+                    <button onClick={() => deleteReceipt(selected.id, selected.order_name)} className="bg-red-50 text-red-400 font-bold py-3 rounded-2xl text-sm active:scale-95">🗑️ ลบออเดอร์</button>
                   </div>
                 )}
               </div>
@@ -835,17 +794,42 @@ export default function ParcelsPage() {
             <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-xl">
               <h3 className="font-bold text-gray-800 mb-1">✅ ยืนยันรับสินค้า</h3>
               <p className="text-sm text-gray-400 mb-3">{pendingReceive.order_name || 'ไม่ระบุชื่อ'}</p>
+
               <div className="bg-gray-50 rounded-2xl p-3 mb-3 text-sm space-y-1">
-                <div className="flex justify-between"><span className="text-gray-400">COD ที่คำนวณได้</span><span>{getCOD(pendingReceive).toFixed(2)}฿</span></div>
+                <div className="flex justify-between"><span className="text-gray-400">ราคาสินค้ารวม</span><span className="font-bold">{getCOD(pendingReceive).toFixed(2)}฿</span></div>
                 <div className="flex justify-between"><span className="text-gray-400">ค่ากด</span><span className="text-rose-500 font-bold">{pendingReceive.service_fee_actual?.toFixed(2) || '0'}฿</span></div>
               </div>
-              <div className="space-y-2 mb-3">
-                <div>
-                  <label className="text-xs text-gray-400">วันที่รับของจริง</label>
-                  <input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)}
-                    className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" />
+
+              <div className="mb-3">
+                <label className="text-xs text-gray-400">วันที่รับของจริง</label>
+                <input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)}
+                  className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" />
+              </div>
+
+              {/* ✅ checkbox สั่งเอง — เลือกจ่ายแล้วหรือผ่อน */}
+              {isSelfOrder(pendingReceive) ? (
+                <div className="bg-blue-50 rounded-2xl p-3 mb-3">
+                  <p className="text-xs text-blue-700 font-bold mb-2">🛒 สั่งเอง — ชำระแบบไหนคะ?</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setPaymentType('prepaid')}
+                      className={`py-2.5 rounded-xl text-sm font-bold transition-all ${paymentType === 'prepaid' ? 'bg-teal-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
+                      ✅ จ่ายแล้ว
+                    </button>
+                    <button onClick={() => setPaymentType('installment')}
+                      className={`py-2.5 rounded-xl text-sm font-bold transition-all ${paymentType === 'installment' ? 'bg-purple-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
+                      💳 ผ่อน
+                    </button>
+                  </div>
+                  {paymentType === 'prepaid' && (
+                    <p className="text-xs text-teal-600 mt-2">✅ จะบันทึกรายจ่าย {getCOD(pendingReceive).toFixed(2)}฿ ในการเงินให้อัตโนมัติค่ะ</p>
+                  )}
+                  {paymentType === 'installment' && (
+                    <p className="text-xs text-purple-600 mt-2">💳 บันทึกรับของแล้วค่ะ อย่าลืมไปเพิ่มหนี้สินด้วยนะคะ</p>
+                  )}
                 </div>
-                <div>
+              ) : (
+                // COD ปกติ
+                <div className="mb-3">
                   <label className="text-xs text-gray-400">ยอด COD ที่จ่ายจริง (฿)</label>
                   <input type="number" step="0.01" value={actualCOD} onChange={e => setActualCOD(Number(e.target.value))}
                     className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" autoFocus />
@@ -856,7 +840,8 @@ export default function ParcelsPage() {
                       className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
                   </div>
                 </div>
-              </div>
+              )}
+
               <div className="grid grid-cols-2 gap-2">
                 <button onClick={() => { setShowConfirmReceive(false); setPendingReceive(null) }}
                   className="bg-gray-100 text-gray-500 py-3 rounded-2xl font-semibold text-sm">ยกเลิก</button>
@@ -886,10 +871,8 @@ export default function ParcelsPage() {
                 ].map(({ label, field, type, placeholder }) => (
                   <div key={field}>
                     <label className="text-xs text-gray-400">{label}</label>
-                    <input type={type} value={(editForm as any)[field]}
-                      onChange={e => setEditForm({ ...editForm, [field]: e.target.value })}
-                      placeholder={placeholder}
-                      className="w-full bg-white rounded-2xl px-4 py-3 text-sm outline-none mt-1 shadow-sm" />
+                    <input type={type} value={(editForm as any)[field]} onChange={e => setEditForm({ ...editForm, [field]: e.target.value })}
+                      placeholder={placeholder} className="w-full bg-white rounded-2xl px-4 py-3 text-sm outline-none mt-1 shadow-sm" />
                   </div>
                 ))}
                 <div className="grid grid-cols-2 gap-2">
@@ -949,7 +932,6 @@ export default function ParcelsPage() {
                 <h3 className="font-bold text-lg text-gray-800">🛒 แก้ไขสินค้า</h3>
                 <button onClick={() => setShowEditItems(false)} className="text-gray-400 text-xl">✕</button>
               </div>
-
               <div className="space-y-2 mb-3">
                 {editItems.map((item, idx) => (
                   <div key={idx} className="bg-white rounded-2xl p-3 shadow-sm flex gap-3 items-center">
@@ -973,17 +955,12 @@ export default function ParcelsPage() {
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => setEditItems(prev => prev.filter((_, i) => i !== idx))}
-                      className="text-gray-300 text-lg flex-shrink-0">✕</button>
+                    <button onClick={() => setEditItems(prev => prev.filter((_, i) => i !== idx))} className="text-gray-300 text-lg flex-shrink-0">✕</button>
                   </div>
                 ))}
               </div>
-
               <button onClick={() => { setShowSearchProduct(true); setSearchProduct('') }}
-                className="w-full bg-white text-rose-400 font-bold py-3 rounded-2xl shadow-sm text-sm mb-4 active:scale-95 transition-transform">
-                + เพิ่มสินค้า
-              </button>
-
+                className="w-full bg-white text-rose-400 font-bold py-3 rounded-2xl shadow-sm text-sm mb-4 active:scale-95">+ เพิ่มสินค้า</button>
               <button onClick={handleSaveEditItems} disabled={saving}
                 className="w-full bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-4 rounded-2xl disabled:opacity-50">
                 {saving ? 'กำลังบันทึก...' : '✅ บันทึกรายการสินค้า'}
@@ -992,7 +969,7 @@ export default function ParcelsPage() {
           </div>
         )}
 
-        {/* ══ Search Product for Edit Items ══ */}
+        {/* ══ Search Product ══ */}
         {showSearchProduct && (
           <div className="fixed inset-0 bg-black/50 z-[70] flex items-end">
             <div className="bg-[#fff5f3] w-full rounded-t-3xl p-4 max-h-[75vh] overflow-y-auto">
@@ -1007,7 +984,7 @@ export default function ParcelsPage() {
               <div className="space-y-1.5 pb-4">
                 {filteredSearchProducts.map(p => (
                   <button key={p.id} onClick={() => addProductToEdit(p)}
-                    className="w-full bg-white rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm active:scale-[0.98] transition-transform">
+                    className="w-full bg-white rounded-2xl px-4 py-3 flex items-center gap-3 shadow-sm active:scale-[0.98]">
                     <div className="w-10 h-10 bg-rose-50 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0">
                       {p.image_url ? <img src={p.image_url} className="w-full h-full object-contain p-1" /> : <span>🐱</span>}
                     </div>
@@ -1027,15 +1004,12 @@ export default function ParcelsPage() {
           <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
             <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-xl">
               <h3 className="font-bold text-gray-800 mb-3">⚠️ สินค้ามีปัญหา</h3>
-              <textarea value={problemNote} onChange={e => setProblemNote(e.target.value)}
-                autoFocus rows={3}
+              <textarea value={problemNote} onChange={e => setProblemNote(e.target.value)} autoFocus rows={3}
                 className="w-full bg-gray-50 rounded-2xl px-4 py-3 text-sm outline-none mb-3"
                 placeholder="เช่น กล่องบุบ, ของไม่ครบ, สินค้าเสียหาย..." />
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setShowProblemDialog(false)}
-                  className="bg-gray-100 text-gray-500 py-3 rounded-2xl font-semibold text-sm">ยกเลิก</button>
-                <button onClick={markProblem} disabled={!problemNote.trim() || saving}
-                  className="bg-red-400 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50">บันทึก</button>
+                <button onClick={() => setShowProblemDialog(false)} className="bg-gray-100 text-gray-500 py-3 rounded-2xl font-semibold text-sm">ยกเลิก</button>
+                <button onClick={markProblem} disabled={!problemNote.trim() || saving} className="bg-red-400 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50">บันทึก</button>
               </div>
             </div>
           </div>

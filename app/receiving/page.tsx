@@ -35,8 +35,6 @@ type ReceiptItem = {
 function calcItemCost(price: number, coupon: Coupon): number {
   switch (coupon.discount_type) {
     case 'flat': {
-      // เช่น คูปอง 165 ลดได้ 165฿ ขั้นต่ำ 1%
-      // จ่ายปลายทาง = max(ราคา × ขั้นต่ำ%, ราคา - ลดได้)
       const minPay = price * (coupon.min_purchase / 100)
       const afterDiscount = price - coupon.discount_value
       return Math.max(minPay, afterDiscount)
@@ -60,9 +58,7 @@ function calcItemCost(price: number, coupon: Coupon): number {
 }
 
 function calcServiceFee(coupon: Coupon, fee: number): number {
-  // ถ้า fee > 0 แสดงว่ากรอกเองแล้ว ใช้ค่านั้นเลย
   if (fee > 0) return fee
-  // ไม่งั้นใช้ค่า default ตามคูปอง
   switch (coupon.service_fee_formula) {
     case 'fixed': return coupon.service_fee || 0
     case 'half': return coupon.discount_value / 2
@@ -81,6 +77,8 @@ export default function OrderPage() {
   const [products, setProducts] = useState<Product[]>([])
 
   const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null)
+  // ✅ เพิ่ม state แยกสำหรับ coupon select value
+  const [couponSelectValue, setCouponSelectValue] = useState<string>('')
   const [manualFee, setManualFee] = useState<number>(0)
   const [platformId, setPlatformId] = useState('')
   const [operatorId, setOperatorId] = useState('')
@@ -120,11 +118,10 @@ export default function OrderPage() {
       if (saved.operatorId) setOperatorId(saved.operatorId)
       if (saved.orderDate) setOrderDate(saved.orderDate)
       if (saved.couponId) {
-        // load coupon ตอน coupons โหลดเสร็จ
         setTimeout(() => {
           setCoupons(curr => {
             const c = curr.find(x => x.id === saved.couponId)
-            if (c) setSelectedCoupon(c)
+            if (c) { setSelectedCoupon(c); setCouponSelectValue(c.id) }
             return curr
           })
         }, 100)
@@ -139,62 +136,85 @@ export default function OrderPage() {
     } catch (e) {}
   }
 
-function recalcItems(currentItems: ReceiptItem[], coupon: Coupon, fee: number) {
-  // รวมราคาทั้งบิลก่อน
-  const totalPrice = currentItems.reduce((sum, i) => sum + i.original_price, 0)
-  const actualFee = fee > 0 ? fee : calcServiceFee(coupon, 0)
+  function recalcItems(currentItems: ReceiptItem[], coupon: Coupon, fee: number) {
+    const totalPrice = currentItems.reduce((sum, i) => sum + i.original_price, 0)
+    const actualFee = fee > 0 ? fee : calcServiceFee(coupon, 0)
+    const totalCOD = calcItemCost(totalPrice, coupon)
+    const updated = currentItems.map(item => {
+      const ratio = totalPrice > 0 ? item.original_price / totalPrice : 0
+      const itemCost = totalCOD * ratio
+      const feeShare = totalPrice > 0 ? (item.original_price / totalPrice) * actualFee : 0
+      const unitCost = item.quantity > 0 ? (itemCost + feeShare) / item.quantity : 0
+      return { ...item, item_cost: itemCost, service_fee_share: feeShare, unit_cost: unitCost }
+    })
+    setItems(updated)
+  }
 
-  // คิด COD จากราคารวมทั้งบิล
-  const totalCOD = calcItemCost(totalPrice, coupon)
+  function selectCoupon(coupon: Coupon) {
+    setSelectedCoupon(coupon)
+    setCouponSelectValue(coupon.id)
+    const defaultFee = calcServiceFee(coupon, 0)
+    setManualFee(defaultFee)
+    saveDefaults({ couponId: coupon.id })
+    recalcItems(items, coupon, defaultFee)
+  }
 
-  const updated = currentItems.map(item => {
-    // แบ่ง COD ตามสัดส่วนราคาสินค้า
-    const ratio = totalPrice > 0 ? item.original_price / totalPrice : 0
-    const itemCost = totalCOD * ratio
-    const feeShare = totalPrice > 0 ? (item.original_price / totalPrice) * actualFee : 0
-    const unitCost = item.quantity > 0 ? (itemCost + feeShare) / item.quantity : 0
-    return { ...item, item_cost: itemCost, service_fee_share: feeShare, unit_cost: unitCost }
-  })
-  setItems(updated)
-}
+  // ✅ เลือก "ไม่มีคูปอง / สั่งเอง"
+  function selectNoCoupon() {
+    setSelectedCoupon(null)
+    setCouponSelectValue('none')
+    setManualFee(0)
+    setItems(prev => prev.map(i => ({
+      ...i,
+      item_cost: i.original_price,
+      service_fee_share: 0,
+      unit_cost: i.quantity > 0 ? i.original_price / i.quantity : 0,
+    })))
+  }
 
-function selectCoupon(coupon: Coupon) {
-  setSelectedCoupon(coupon)
-  // set ค่า default ของค่ากดตามคูปอง
-  const defaultFee = calcServiceFee(coupon, 0)
-  setManualFee(defaultFee)
-  saveDefaults({ couponId: coupon.id })
-  recalcItems(items, coupon, defaultFee)
-}
+  function handleCouponChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const val = e.target.value
+    if (val === '') {
+      // กลับไปเลือกคูปอง
+      setSelectedCoupon(null)
+      setCouponSelectValue('')
+      setManualFee(0)
+    } else if (val === 'none') {
+      selectNoCoupon()
+    } else {
+      const coupon = coupons.find(c => c.id === val)
+      if (coupon) selectCoupon(coupon)
+    }
+  }
 
   function addProduct(product: Product) {
     if (items.find(i => i.product_id === product.id)) {
-      setShowProductSearch(false)
-      setSearchProduct('')
-      return
+      setShowProductSearch(false); setSearchProduct(''); return
     }
     const newItem: ReceiptItem = {
-      product_id: product.id,
-      product_name: product.name,
-      product_unit: product.unit,
-      product_image: product.image_url,
-      quantity: 1,
-      original_price: 0,
-      item_cost: 0,
-      service_fee_share: 0,
-      unit_cost: 0,
+      product_id: product.id, product_name: product.name,
+      product_unit: product.unit, product_image: product.image_url,
+      quantity: 1, original_price: 0, item_cost: 0, service_fee_share: 0, unit_cost: 0,
     }
     const updated = [...items, newItem]
     setItems(updated)
     if (selectedCoupon) recalcItems(updated, selectedCoupon, manualFee)
-    setShowProductSearch(false)
-    setSearchProduct('')
+    setShowProductSearch(false); setSearchProduct('')
   }
 
   function updateItem(index: number, field: 'quantity' | 'original_price', value: number) {
     const updated = items.map((item, i) => i === index ? { ...item, [field]: value } : item)
-    setItems(updated)
-    if (selectedCoupon) recalcItems(updated, selectedCoupon, manualFee)
+    // ถ้าไม่มีคูปอง คำนวณ unit_cost จาก original_price / quantity
+    if (!selectedCoupon) {
+      setItems(updated.map(item => ({
+        ...item,
+        item_cost: item.original_price,
+        unit_cost: item.quantity > 0 ? item.original_price / item.quantity : 0,
+      })))
+    } else {
+      setItems(updated)
+      recalcItems(updated, selectedCoupon, manualFee)
+    }
   }
 
   function removeItem(index: number) {
@@ -203,34 +223,28 @@ function selectCoupon(coupon: Coupon) {
     if (selectedCoupon) recalcItems(updated, selectedCoupon, manualFee)
   }
 
-  // ราคาสินค้ารวม = ดึงราคามาเลย ไม่ × จำนวน
   const totalOriginalPrice = items.reduce((sum, i) => sum + i.original_price, 0)
   const totalItemCost = selectedCoupon
-  ? items.reduce((sum, i) => sum + i.item_cost, 0)
-  : totalOriginalPrice
+    ? items.reduce((sum, i) => sum + i.item_cost, 0)
+    : totalOriginalPrice
+  const actualFee = selectedCoupon ? calcServiceFee(selectedCoupon, manualFee) : 0
+  const totalCOD = selectedCoupon ? totalItemCost + actualFee : totalOriginalPrice
 
-const actualFee = selectedCoupon ? calcServiceFee(selectedCoupon, manualFee) : 0
-const totalCOD = selectedCoupon ? totalItemCost + actualFee : totalOriginalPrice
-
-async function handleSave(continueAdd: boolean = false) {
-  if (items.length === 0) return
-  setSaving(true)
+  async function handleSave(continueAdd: boolean = false) {
+    if (items.length === 0) return
+    setSaving(true)
     try {
-      const { data: receipt, error } = await supabase
-        .from('stock_receipts')
-        .insert({
-          platform_id: platformId || null,
-          operator_id: operatorId || null,
-          coupon_id: selectedCoupon?.id || null,
-          order_name: orderName,
-          order_date: orderDate,
-          service_fee_actual: actualFee,
-          tracking_no: trackingNo || null,
-          status: 'pending',
-          note,
-        })
-        .select()
-        .single()
+      const { data: receipt, error } = await supabase.from('stock_receipts').insert({
+        platform_id: platformId || null,
+        operator_id: operatorId || null,
+        coupon_id: selectedCoupon?.id || null,
+        order_name: orderName,
+        order_date: orderDate,
+        service_fee_actual: actualFee,
+        tracking_no: trackingNo || null,
+        status: 'pending',
+        note,
+      }).select().single()
 
       if (error) throw error
 
@@ -240,25 +254,19 @@ async function handleSave(continueAdd: boolean = false) {
           product_id: item.product_id,
           quantity: item.quantity,
           original_price: item.original_price,
-          item_cost: item.item_cost,
+          item_cost: selectedCoupon ? item.item_cost : item.original_price,
           service_fee_share: item.service_fee_share,
-          unit_cost: item.unit_cost,
+          unit_cost: selectedCoupon ? item.unit_cost : (item.quantity > 0 ? item.original_price / item.quantity : 0),
         }))
       )
 
-      // เก็บ default แต่ล้างชื่อกับสินค้า
-// เก็บ default (วันที่/แพลตฟอร์ม/คนกด/คูปอง) แต่ล้างชื่อกับสินค้า
-setOrderName('')
-setNote('')
-setItems([])
-
-if (continueAdd) {
-  // เลื่อนขึ้นบน + focus ที่ช่องชื่อ
-  window.scrollTo({ top: 0, behavior: 'smooth' })
-} else {
-  alert('บันทึกการสั่งเรียบร้อยแล้วค่ะ!')
-  router.push('/')
-}
+      setOrderName(''); setNote(''); setItems([])
+      if (continueAdd) {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      } else {
+        alert('บันทึกการสั่งเรียบร้อยแล้วค่ะ!')
+        router.push('/')
+      }
     } catch (e) {
       alert('เกิดข้อผิดพลาดค่ะ')
     }
@@ -274,18 +282,15 @@ if (continueAdd) {
     <main className="min-h-screen bg-[#fff5f3] p-4">
       <div className="max-w-md mx-auto">
 
-        {/* Header */}
         <div className="flex items-center gap-3 mb-4">
           <button onClick={() => router.push('/')} className="text-gray-500">← กลับ</button>
           <h1 className="text-xl font-bold text-gray-800">📦 สั่งออเดอร์</h1>
         </div>
 
-        {/* ข้อมูลการสั่ง */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
           <h2 className="font-bold text-gray-700 mb-3">ข้อมูลการสั่ง</h2>
           <div className="space-y-3">
 
-            {/* วันที่ */}
             <div>
               <label className="text-xs text-gray-500">วันที่สั่ง</label>
               <input type="date" value={orderDate}
@@ -293,12 +298,11 @@ if (continueAdd) {
                 className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm" />
             </div>
 
-            {/* แพลตฟอร์ม + คนกด */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-gray-500">แพลตฟอร์ม</label>
                 <select value={platformId}
-                  onChange={e => { setPlatformId(e.target.value); setSelectedCoupon(null); saveDefaults({ platformId: e.target.value }) }}
+                  onChange={e => { setPlatformId(e.target.value); setSelectedCoupon(null); setCouponSelectValue(''); saveDefaults({ platformId: e.target.value }) }}
                   className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
                   <option value="">เลือก</option>
                   {platforms.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -315,7 +319,6 @@ if (continueAdd) {
               </div>
             </div>
 
-            {/* ชื่อที่สั่ง */}
             <div>
               <label className="text-xs text-gray-500">ชื่อที่สั่ง</label>
               <input value={orderName} onChange={e => setOrderName(e.target.value)}
@@ -323,29 +326,13 @@ if (continueAdd) {
                 placeholder="ชื่อที่สั่ง" />
             </div>
 
-            {/* คูปอง + ค่ากด */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-gray-500">คูปอง</label>
-                <select value={selectedCoupon?.id || ''}
-
-              onChange={e => {
-                if (e.target.value === 'none') {
-                  setSelectedCoupon(null)
-                  setManualFee(0)
-                  // ล้าง item_cost ให้ = original_price
-                  setItems(prev => prev.map(i => ({
-                    ...i,
-                    item_cost: i.original_price,
-                    service_fee_share: 0,
-                    unit_cost: i.quantity > 0 ? i.original_price / i.quantity : 0,
-                  })))
-                  return
-                }
-                const coupon = coupons.find(c => c.id === e.target.value)
-                if (coupon) selectCoupon(coupon)
-              }}
-
+                {/* ✅ ใช้ couponSelectValue แยกต่างหาก */}
+                <select
+                  value={couponSelectValue}
+                  onChange={handleCouponChange}
                   className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm">
                   <option value="">เลือกคูปอง</option>
                   <option value="none">🛒 ไม่มีคูปอง / สั่งเอง</option>
@@ -356,27 +343,31 @@ if (continueAdd) {
               </div>
               <div>
                 <label className="text-xs text-gray-500">ค่ากด (฿)</label>
-<input
-  type="number"
-  value={manualFee}
-  onChange={e => {
-    const fee = Number(e.target.value)
-    setManualFee(fee)
-    if (selectedCoupon) recalcItems(items, selectedCoupon, fee)
-  }}
-  disabled={!selectedCoupon}
-  className={`w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm ${
-    !selectedCoupon ? 'bg-gray-50 text-gray-400' : ''
-  }`}
-  placeholder="0"
-/>
+                <input
+                  type="number"
+                  value={manualFee}
+                  onChange={e => {
+                    const fee = Number(e.target.value)
+                    setManualFee(fee)
+                    if (selectedCoupon) recalcItems(items, selectedCoupon, fee)
+                  }}
+                  disabled={!selectedCoupon}
+                  className={`w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm ${!selectedCoupon ? 'bg-gray-50 text-gray-400' : ''}`}
+                  placeholder="0"
+                />
               </div>
             </div>
+
+            {/* ✅ แสดง badge ถ้าเลือกสั่งเอง */}
+            {couponSelectValue === 'none' && (
+              <div className="bg-blue-50 rounded-xl px-3 py-2 text-xs text-blue-600 font-semibold">
+                🛒 สั่งเอง — ไม่มีคูปอง ไม่มีค่ากดค่ะ
+              </div>
+            )}
 
           </div>
         </div>
 
-        {/* สินค้า */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
           <div className="flex justify-between items-center mb-3">
             <h2 className="font-bold text-gray-700">รายการสินค้า</h2>
@@ -402,9 +393,7 @@ if (continueAdd) {
                   <button key={p.id} onClick={() => addProduct(p)}
                     className="w-full text-left p-3 border-b border-gray-100 hover:bg-gray-50 flex gap-2 items-center">
                     <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {p.image_url ? (
-                        <img src={p.image_url} className="w-full h-full object-contain p-1" />
-                      ) : <span>🐱</span>}
+                      {p.image_url ? <img src={p.image_url} className="w-full h-full object-contain p-1" /> : <span>🐱</span>}
                     </div>
                     <div className="flex-1">
                       <div className="font-medium text-sm">{p.name}</div>
@@ -424,9 +413,7 @@ if (continueAdd) {
                 <div key={item.product_id} className="border border-gray-100 rounded-xl p-3">
                   <div className="flex gap-2 items-start mb-2">
                     <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {item.product_image ? (
-                        <img src={item.product_image} className="w-full h-full object-contain p-1" />
-                      ) : <span className="text-xl">🐱</span>}
+                      {item.product_image ? <img src={item.product_image} className="w-full h-full object-contain p-1" /> : <span className="text-xl">🐱</span>}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm line-clamp-1">{item.product_name}</div>
@@ -447,56 +434,47 @@ if (continueAdd) {
                         className="w-full border border-gray-200 rounded-lg p-1 text-sm mt-1" />
                     </div>
                   </div>
-
                   {item.original_price > 0 && item.quantity > 0 && (
-                  <div className="mt-2 text-xs text-rose-400">
-                  ต้นทุน/ชิ้น: {selectedCoupon ? item.unit_cost.toFixed(2) : (item.original_price / item.quantity).toFixed(2)}฿
-                  </div>
-                )}
-
+                    <div className="mt-2 text-xs text-rose-400">
+                      ต้นทุน/ชิ้น: {selectedCoupon
+                        ? item.unit_cost.toFixed(2)
+                        : (item.original_price / item.quantity).toFixed(2)}฿
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
 
-{/* สรุปราคา */}
-{items.length > 0 && (
-  <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
-    <h2 className="font-bold text-gray-700 mb-3">สรุปราคา</h2>
-    <div className="space-y-2 text-sm">
-      <div className="flex justify-between">
-        <span className="text-gray-500">ราคาสินค้า</span>
-        <span>{totalOriginalPrice.toFixed(2)}฿</span>
-      </div>
-      <div className="flex justify-between">
-        <span className="text-gray-500">ส่วนลด {selectedCoupon ? `(${selectedCoupon.name})` : ''}</span>
-        <span className="text-green-500">-{selectedCoupon ? (selectedCoupon.display_value || selectedCoupon.discount_value).toFixed(2) : '0.00'}฿</span>
-      </div>
-      <div className="flex justify-between">
-        <span className="text-gray-500">ค่ากดของ</span>
-        <span>{actualFee.toFixed(2)}฿</span>
-      </div>
+        {items.length > 0 && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
+            <h2 className="font-bold text-gray-700 mb-3">สรุปราคา</h2>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-500">ราคาสินค้า</span>
+                <span>{totalOriginalPrice.toFixed(2)}฿</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">ส่วนลด {selectedCoupon ? `(${selectedCoupon.name})` : ''}</span>
+                <span className="text-green-500">-{selectedCoupon ? (selectedCoupon.display_value || selectedCoupon.discount_value).toFixed(2) : '0.00'}฿</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">ค่ากดของ</span>
+                <span>{actualFee.toFixed(2)}฿</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">รวมจ่ายปลายทาง</span>
+                <span>{totalCOD.toFixed(2)}฿</span>
+              </div>
+              <div className="flex justify-between font-bold text-xl border-t border-gray-100 pt-3 mt-3">
+                <span>ราคาปลายทาง</span>
+                <span className="text-rose-500">{totalItemCost.toFixed(2)}฿</span>
+              </div>
+            </div>
+          </div>
+        )}
 
-      <div className="flex justify-between">
-        <span className="text-gray-500">รวมจ่ายปลายทาง</span>
-        <span>{totalCOD.toFixed(2)}฿</span>
-      </div>
-
-
-          <div className="flex justify-between font-bold text-xl border-t border-gray-100 pt-3 mt-3">
-        <span>ราคาปลายทาง</span>
-        <span className="text-rose-500">{totalItemCost.toFixed(2)}฿</span>
-      </div>
-
-
-    </div>
-  </div>
-
-
-)}
-
-        {/* Note */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-4">
           <label className="text-xs text-gray-500">หมายเหตุ</label>
           <textarea value={note} onChange={e => setNote(e.target.value)}
@@ -504,19 +482,16 @@ if (continueAdd) {
             rows={2} placeholder="หมายเหตุเพิ่มเติม" />
         </div>
 
-{/* Save buttons */}
-<div className="grid grid-cols-2 gap-2 mb-8">
-  <button onClick={() => handleSave(false)}
-    disabled={saving || items.length === 0}
-    className="bg-gray-200 text-gray-700 font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
-    {saving ? 'กำลังบันทึก...' : '✅ บันทึก'}
-  </button>
-  <button onClick={() => handleSave(true)}
-    disabled={saving || items.length === 0}
-    className="bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
-    {saving ? 'กำลังบันทึก...' : '⚡ บันทึก + บิลใหม่'}
-  </button>
-</div>
+        <div className="grid grid-cols-2 gap-2 mb-8">
+          <button onClick={() => handleSave(false)} disabled={saving || items.length === 0}
+            className="bg-gray-200 text-gray-700 font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
+            {saving ? 'กำลังบันทึก...' : '✅ บันทึก'}
+          </button>
+          <button onClick={() => handleSave(true)} disabled={saving || items.length === 0}
+            className="bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-3 rounded-2xl disabled:opacity-50 text-sm">
+            {saving ? 'กำลังบันทึก...' : '⚡ บันทึก + บิลใหม่'}
+          </button>
+        </div>
 
       </div>
     </main>
