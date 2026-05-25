@@ -86,6 +86,7 @@ export default function Dashboard() {
       .from('orders')
       .select('total')
       .eq('payment_status', 'pending')
+      .neq('status', 'cancelled')
     setUnpaidCount(unpaid?.length || 0)
     setUnpaidTotal(unpaid?.reduce((sum, o) => sum + o.total, 0) || 0)
 
