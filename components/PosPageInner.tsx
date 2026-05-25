@@ -56,6 +56,8 @@ function PosPageInner() {
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid')
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer'>('transfer')
   const [note, setNote] = useState('')
+  // ✅ เพิ่ม state วันที่บันทึกบิล
+  const [orderDate, setOrderDate] = useState(new Date().toISOString().split('T')[0])
   const [deliveryAddress, setDeliveryAddress] = useState('')
   const [showAddCustomer, setShowAddCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
@@ -84,7 +86,6 @@ function PosPageInner() {
 
   useEffect(() => {
     fetchData()
-    // ✅ อ่าน editing order จาก URL params
     const editOrderId = searchParams.get('edit_order_id')
     const editCustomer = searchParams.get('edit_customer')
     const editCustomerId = searchParams.get('edit_customer_id')
@@ -92,7 +93,6 @@ function PosPageInner() {
       setEditingOrderId(editOrderId)
       setCustomerSearch(editCustomer || '')
       setCustomerId(editCustomerId || '')
-      // ล้าง URL ออกหลังอ่าน
       window.history.replaceState({}, '', '/pos')
     }
   }, [searchParams])
@@ -322,7 +322,7 @@ function PosPageInner() {
 
   function generateSlip(orderCart: typeof cart, orderTotal: number, orderDiscount: number, orderSubtotal: number, isReservation: boolean) {
     const line = '──────────'
-    const date = new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+    const date = new Date(orderDate + 'T12:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
     const customerName = customerSearch || 'ลูกค้าทั่วไป'
     let text = `🐱 ร้าน Pick a cat.\nวันที่ ${date}\nลูกค้า: ${customerName}\n${line}\n`
     orderCart.forEach(item => { text += `${item.quantity}  ${item.name}\n${''.padStart(15)}${(item.unit_price * item.quantity).toLocaleString()}฿\n` })
@@ -340,10 +340,14 @@ function PosPageInner() {
     if (orderType === 'normal' && !scheduledDate) { alert('กรุณาเลือกวันส่งค่ะ'); return }
     setSaving(true)
     try {
+      // ✅ ใช้ orderDate ที่เลือก แทน new Date() เสมอ
+      const orderDateISO = new Date(orderDate + 'T12:00:00+07:00').toISOString()
+
       const { data: order, error } = await supabase.from('orders').insert({
         customer_id: customerId || null, subtotal, discount, total,
         payment_method: paymentMethod, payment_status: paymentStatus,
-        paid_at: paymentStatus === 'paid' ? new Date().toISOString() : null,
+        order_date: orderDateISO,
+        paid_at: paymentStatus === 'paid' ? orderDateISO : null,
         note, order_type: orderType,
       }).select().single()
       if (error) throw error
@@ -368,8 +372,10 @@ function PosPageInner() {
       }
       const slip = generateSlip(cart, total, discount, subtotal, orderType === 'reservation')
       setSlipText(slip); setShowSlip(true)
+      // ✅ reset state ทั้งหมด รวม orderDate
       setCart([]); setDiscount(0); setCustomerId(''); setCustomerSearch('')
       setNote(''); setBagCount(0); setZoneId(''); setDeliveryAddress('')
+      setOrderDate(new Date().toISOString().split('T')[0])
       setOrderType('normal')
       if (deliveryRounds.length > 0) setScheduledDate(deliveryRounds[0].delivery_date)
       setShowCheckout(false); setShowCart(false)
@@ -844,6 +850,16 @@ function PosPageInner() {
                       <button onClick={() => setPaymentMethod('cash')} className={`py-2 rounded-xl text-sm font-medium ${paymentMethod === 'cash' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-white text-gray-600'}`}>💵 เงินสด</button>
                       <button onClick={() => setPaymentMethod('transfer')} className={`py-2 rounded-xl text-sm font-medium ${paymentMethod === 'transfer' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-white text-gray-600'}`}>💳 โอน</button>
                     </div>
+                    {/* ✅ เพิ่ม input วันที่รับเงิน */}
+                    <div className="mt-2">
+                      <label className="text-xs text-gray-500">📅 วันที่รับเงิน</label>
+                      <input
+                        type="date"
+                        value={orderDate}
+                        onChange={e => setOrderDate(e.target.value)}
+                        className="w-full border border-gray-200 rounded-xl p-2 mt-1 text-sm bg-white"
+                      />
+                    </div>
                   </div>
                 )}
                 <div><label className="text-xs text-gray-500">หมายเหตุ</label>
@@ -919,7 +935,6 @@ function PosPageInner() {
           setEditingOrder(false)
           setShowOrderHistory(false)
         }}
-
         onUpdated={async () => {
           if (selectedOrder) {
             const { data } = await supabase
@@ -945,4 +960,4 @@ function PosPageInner() {
     </main>
   )
 }
-export default PosPageInner 
+export default PosPageInner

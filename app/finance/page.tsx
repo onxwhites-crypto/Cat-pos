@@ -101,11 +101,13 @@ export default function FinancePage() {
     const toDate = new Date(year, month + 1, 0).toISOString().split('T')[0]
 
     const [{ data: o }, { data: e }, { data: r }, { data: fs }] = await Promise.all([
-      supabase.from('orders')
-        .select('id, order_date, created_at, total, payment_status, customers(name), order_items(quantity, unit_price, products(avg_cost, name))')
-        .gte('order_date', fromDate).lte('order_date', toDate)
-        .eq('payment_status', 'paid')
-        .order('order_date', { ascending: false }),
+    supabase.from('orders')
+      .select('id, order_date, created_at, total, payment_status, customers(name), order_items(quantity, unit_price, products(avg_cost, name))')
+      .gte('order_date', fromDate + 'T00:00:00+07:00')
+      .lte('order_date', toDate + 'T23:59:59+07:00')
+      .eq('payment_status', 'paid')
+      .neq('status', 'cancelled')
+      .order('order_date', { ascending: false }),
       supabase.from('expenses')
         .select('*').gte('date', fromDate).lte('date', toDate)
         .order('date', { ascending: false }),
@@ -163,7 +165,7 @@ export default function FinancePage() {
   }
 
   function calcDay(dateStr: string) {
-    const dayOrders = orders.filter(o => o.order_date === dateStr || o.created_at?.startsWith(dateStr))
+    const dayOrders = orders.filter(o => o.order_date?.substring(0, 10) === dateStr || o.created_at?.substring(0, 10) === dateStr)
     const sales = dayOrders.reduce((s, o) => s + o.total, 0)
     const cost = dayOrders.reduce((s, o) => s + o.order_items.reduce((ss, i) => ss + ((i.products?.avg_cost || 0) * i.quantity), 0), 0)
     const grossProfit = sales - cost
@@ -415,7 +417,7 @@ export default function FinancePage() {
 
             {selectedDate && (() => {
               const d = calcDay(selectedDate)
-              const selOrders = orders.filter(o => o.order_date === selectedDate || o.created_at?.startsWith(selectedDate))
+              const selOrders = orders.filter(o => o.order_date?.substring(0, 10) === selectedDate || o.created_at?.substring(0, 10) === selectedDate)
               const selExpenses = expenses.filter(e => e.date === selectedDate)
               const selSales = selOrders.reduce((s, o) => s + o.total, 0)
               const selCost = selOrders.reduce((s, o) => s + o.order_items.reduce((ss, i) => ss + ((i.products?.avg_cost || 0) * i.quantity), 0), 0)
