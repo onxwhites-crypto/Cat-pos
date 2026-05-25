@@ -33,6 +33,9 @@ export default function OrdersPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [searchName, setSearchName] = useState('')
+  const [showPaidDialog, setShowPaidDialog] = useState(false)
+  const [paidOrderId, setPaidOrderId] = useState<string | null>(null)
+  const [paidDate, setPaidDate] = useState(new Date().toISOString().split('T')[0])
 
   useEffect(() => { fetchOrders() }, [filter, dateFrom, dateTo])
 
@@ -45,6 +48,7 @@ export default function OrdersPage() {
         customers(name, phone),
         order_items(id, quantity, unit_price, total_price, products(name, unit, image_url, avg_cost))
       `)
+      .neq('status', 'cancelled')
       .order('order_date', { ascending: false })
 
     if (filter === 'paid') query = query.eq('payment_status', 'paid')
@@ -59,37 +63,44 @@ export default function OrdersPage() {
     setLoading(false)
   }
 
-  async function markAsPaid(id: string) {
-    if (!confirm('ยืนยันว่าได้รับเงินแล้วใช่ไหมคะ?')) return
-    await supabase.from('orders').update({
-      payment_status: 'paid',
-      paid_at: new Date().toISOString(),
-    }).eq('id', id)
-    fetchOrders()
-    if (selectedOrder?.id === id) setSelectedOrder(null)
-  }
+async function markAsPaid() {
+  if (!paidOrderId) return
+  await supabase.from('orders').update({
+    payment_status: 'paid',
+    paid_at: new Date(paidDate).toISOString(),
+  }).eq('id', paidOrderId)
+  setShowPaidDialog(false)
+  setPaidOrderId(null)
+  fetchOrders()
+  if (selectedOrder?.id === paidOrderId) setSelectedOrder(null)
+}
 
-  async function deleteOrder(id: string) {
-    if (!confirm('ลบบิลนี้? (ไม่สามารถกู้คืนได้)')) return
-    try {
-      const { data: items } = await supabase.from('order_items').select('product_id, quantity').eq('order_id', id)
-      if (items && items.length > 0) {
-        for (const item of items) {
-          const { data: p } = await supabase.from('products').select('stock_qty').eq('id', item.product_id).single()
-          if (p) {
-            await supabase.from('products').update({ stock_qty: p.stock_qty + item.quantity }).eq('id', item.product_id)
-          }
+async function deleteOrder(id: string) {
+  if (!confirm('ยืนยันยกเลิกบิลนี้?')) return
+  try {
+    const { data: items } = await supabase
+      .from('order_items').select('product_id, quantity').eq('order_id', id)
+    if (items) {
+      for (const item of items) {
+        const { data: p } = await supabase
+          .from('products').select('stock_qty').eq('id', item.product_id).single()
+        if (p) {
+          await supabase.from('products')
+            .update({ stock_qty: p.stock_qty + item.quantity }).eq('id', item.product_id)
+          await supabase.from('stock_movements').insert({
+            product_id: item.product_id, type: 'IN',
+            quantity: item.quantity, ref_type: 'cancel', ref_id: id
+          })
         }
       }
-      await supabase.from('stock_movements').delete().eq('ref_id', id).eq('ref_type', 'order')
-      await supabase.from('order_items').delete().eq('order_id', id)
-      await supabase.from('deliveries').delete().eq('order_id', id)
-      await supabase.from('orders').delete().eq('id', id)
-      setSelectedOrder(null)
-      fetchOrders()
-    } catch { alert('เกิดข้อผิดพลาดค่ะ') }
-  }
-
+    }
+    await supabase.from('deliveries').delete().eq('order_id', id)
+    await supabase.from('orders').update({ status: 'cancelled' }).eq('id', id)
+    setSelectedOrder(null)
+    fetchOrders()
+    alert('ยกเลิกบิลเรียบร้อยค่ะ')
+  } catch { alert('เกิดข้อผิดพลาดค่ะ') }
+}
   const totalSales = orders.filter(o => o.payment_status === 'paid').reduce((sum, o) => sum + o.total, 0)
   const totalPending = orders.filter(o => o.payment_status === 'pending').reduce((sum, o) => sum + o.total, 0)
   const totalReservation = orders.filter(o => o.order_type === 'reservation').length
@@ -366,10 +377,10 @@ export default function OrdersPage() {
             {/* Actions */}
             <div className="space-y-2">
               {selectedOrder.payment_status === 'pending' && (
-                <button onClick={() => markAsPaid(selectedOrder.id)}
-                  className="w-full bg-teal-500 text-white font-bold py-3.5 rounded-2xl active:scale-95 transition-transform">
-                  ✅ บันทึกว่าได้รับเงินแล้ว
-                </button>
+              <button onClick={() => { setPaidOrderId(selectedOrder.id); setPaidDate(new Date().toISOString().split('T')[0]); setShowPaidDialog(true) }}
+                className="w-full bg-teal-500 text-white font-bold py-3.5 rounded-2xl active:scale-95 transition-transform">
+                ✅ บันทึกว่าได้รับเงินแล้ว
+              </button>
               )}
               <button onClick={() => deleteOrder(selectedOrder.id)}
                 className="w-full bg-red-50 text-red-400 font-bold py-3.5 rounded-2xl active:scale-95 transition-transform">
@@ -379,6 +390,37 @@ export default function OrdersPage() {
           </div>
         </div>
       )}
+
+{/* ══ PAID DIALOG ══ */}
+{showPaidDialog && (
+  <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+    <div className="bg-white rounded-3xl p-5 w-full max-w-xs shadow-xl">
+      <h3 className="font-bold text-gray-800 mb-1">✅ บันทึกรับเงิน</h3>
+      <p className="text-xs text-gray-400 mb-4">เลือกวันที่รับเงินค่ะ</p>
+      <div className="mb-4">
+        <label className="text-xs text-gray-500 font-semibold">วันที่รับเงิน</label>
+        <input
+          type="date"
+          value={paidDate}
+          onChange={e => setPaidDate(e.target.value)}
+          className="w-full bg-gray-50 rounded-2xl px-4 py-3 text-sm outline-none mt-1"
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => { setShowPaidDialog(false); setPaidOrderId(null) }}
+          className="bg-gray-100 text-gray-600 py-3 rounded-2xl font-semibold text-sm">
+          ยกเลิก
+        </button>
+        <button
+          onClick={markAsPaid}
+          className="bg-teal-500 text-white py-3 rounded-2xl font-bold text-sm">
+          ✅ บันทึก
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
     </main>
   )

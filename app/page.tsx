@@ -136,7 +136,7 @@ export default function Dashboard() {
       🦥
     </div>
     <div>
-      <h1 className="text-[17px] font-bold text-gray-800 leading-none">Pick A Cat.</h1>
+      <h1 className="text-[17px] font-bold text-gray-800 leading-none">Pawboard.</h1>
       <p className="text-[10px] text-gray-400 mt-0.5">{dateStr}</p>
     </div>
   </div>

@@ -15,6 +15,9 @@ type Receipt = {
   problem_note: string | null
   note: string | null
   payment_type: string | null
+  order_for: string | null        // 'self' | 'sister'
+  payment_method: string | null   // 'cod' | 'promptpay' | 'installment'
+  fee_payer: string | null        // 'self' | 'white'
   platforms: { id: string; name: string } | null
   operators: { id: string; name: string } | null
   coupons: { id: string; name: string; discount_value: number } | null
@@ -27,6 +30,8 @@ type Receipt = {
     products: { id: string; name: string; unit: string; image_url: string | null } | null
   }[]
 }
+
+type CodPayer = 'self' | 'white'
 
 type Product = { id: string; name: string; code: string; unit: string; image_url: string | null }
 
@@ -43,6 +48,7 @@ export default function ParcelsPage() {
   const [filterOrderDate, setFilterOrderDate] = useState('')
   const [filterReceivedDate, setFilterReceivedDate] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'received' | 'problem'>('pending')
+  const [filterOrderFor, setFilterOrderFor] = useState<'all' | 'self' | 'sister'>('all')
   const [selected, setSelected] = useState<Receipt | null>(null)
   const [problemNote, setProblemNote] = useState('')
   const [showProblemDialog, setShowProblemDialog] = useState(false)
@@ -56,12 +62,12 @@ export default function ParcelsPage() {
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split('T')[0])
   const [pendingReceive, setPendingReceive] = useState<Receipt | null>(null)
   const [paymentType, setPaymentType] = useState<'prepaid' | 'installment'>('prepaid')
+  const [codPayer, setCodPayer] = useState<CodPayer>('self')   // ใครจ่าย COD
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState({
     order_name: '', order_date: '', platform_id: '', operator_id: '',
     coupon_id: '', service_fee_actual: 0, note: '', tracking_no: '',
   })
-
   const [showEditItems, setShowEditItems] = useState(false)
   const [editItems, setEditItems] = useState<{ id: string; product_id: string; product_name: string; product_unit: string; product_image: string | null; quantity: number; original_price: number }[]>([])
   const [showSearchProduct, setShowSearchProduct] = useState(false)
@@ -110,7 +116,8 @@ export default function ParcelsPage() {
     const matchOperator = !filterOperator || r.operators?.id === filterOperator
     const matchOrderDate = !filterOrderDate || r.order_date?.startsWith(filterOrderDate)
     const matchReceivedDate = !filterReceivedDate || r.received_at?.startsWith(filterReceivedDate)
-    return matchStatus && matchSearch && matchOperator && matchOrderDate && matchReceivedDate
+    const matchOrderFor = filterOrderFor === 'all' || r.order_for === filterOrderFor
+    return matchStatus && matchSearch && matchOperator && matchOrderDate && matchReceivedDate && matchOrderFor
   })
 
   const sevenDaysAgo = new Date()
@@ -121,17 +128,15 @@ export default function ParcelsPage() {
   const pendingTotal = receipts.filter(r => r.status === 'pending').length
   const receivedToday = receipts.filter(r => r.status === 'received' && r.received_at?.startsWith(today)).length
   const overdueCount = receipts.filter(r => r.status === 'pending' && r.order_date < sevenDaysAgoStr).length
+  const sisterPending = receipts.filter(r => r.order_for === 'sister' && r.status === 'pending').length
 
   function getCOD(r: Receipt) {
     return r.stock_receipt_items.reduce((s, i) => {
-      // ✅ ถ้ามีคูปอง ใช้ item_cost เสมอ (แม้จะเป็น 0 ก็ตาม)
-      // ถ้าไม่มีคูปอง ใช้ original_price
       const cost = r.coupons ? i.item_cost : i.original_price
       return s + cost
     }, 0)
   }
 
-  // ✅ เช็คว่าเป็นออเดอร์สั่งเอง (ไม่มีคูปอง)
   function isSelfOrder(r: Receipt) {
     return !r.coupons && r.service_fee_actual === 0
   }
@@ -305,8 +310,8 @@ export default function ParcelsPage() {
     setPendingReceive(receipt)
     setActualCOD(getCOD(receipt))
     setReceivedDate(today)
-    // ✅ default = prepaid (จ่ายแล้ว) สำหรับสั่งเอง
     setPaymentType('prepaid')
+    setCodPayer('self')   // default = เราจ่าย
     setShowConfirmReceive(true)
   }
 
@@ -341,7 +346,7 @@ export default function ParcelsPage() {
         }
       }
 
-      // ✅ บันทึกรายจ่ายอัตโนมัติ ถ้าสั่งเองและจ่ายแล้ว (prepaid)
+      // บันทึกรายจ่ายอัตโนมัติ ถ้าสั่งเองและจ่ายแล้ว
       if (isSelf && paymentType === 'prepaid') {
         const totalCost = pendingReceive.stock_receipt_items.reduce((s, i) => s + i.original_price, 0)
         if (totalCost > 0) {
@@ -355,13 +360,36 @@ export default function ParcelsPage() {
         }
       }
 
-      alert(
-        isSelf && paymentType === 'prepaid'
-          ? 'รับพัสดุเรียบร้อย! บันทึกรายจ่ายให้อัตโนมัติแล้วค่ะ ✅'
-          : isSelf && paymentType === 'installment'
-          ? 'รับพัสดุเรียบร้อย! อย่าลืมบันทึกหนี้สินด้วยนะคะ 💳'
-          : 'รับพัสดุเรียบร้อย! สินค้าเข้าสต็อกแล้วค่ะ'
-      )
+      // ─── สร้างหนี้ "เราเป็นหนี้ไวท์" ถ้าไวท์จ่าย COD ─── 
+      const WHITE_CATEGORY_ID = '61f0acb2-54c7-4dc6-9d0d-c06a50a2522b'
+      if (!isSelf && codPayer === 'white' && finalCOD > 0) {
+        const dateLabel = new Date(receivedDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+        await supabase.from('debts').insert({
+          name: `ไวท์จ่าย COD · ${pendingReceive.order_name || 'ไม่ระบุชื่อ'} · ${dateLabel}`,
+          amount: finalCOD,
+          paid_amount: 0,
+          category: 'หนี้ไวท์',
+          debt_category_id: WHITE_CATEGORY_ID,
+          status: 'unpaid',
+          note: `receipt_id:${pendingReceive.id}`,
+          receipt_id: pendingReceive.id,
+          debtor: 'เรา',
+          creditor: 'ไวท์',
+          has_installments: false,
+        })
+      }
+
+      const msgMap = {
+        selfPrepaid: 'รับพัสดุเรียบร้อย! บันทึกรายจ่ายให้อัตโนมัติแล้วค่ะ ✅',
+        selfInstallment: 'รับพัสดุเรียบร้อย! อย่าลืมบันทึกหนี้สินด้วยนะคะ 💳',
+        codSelf: 'รับพัสดุเรียบร้อย! สินค้าเข้าสต็อกแล้วค่ะ',
+        codWhite: 'รับพัสดุเรียบร้อย! บันทึกหนี้ "เราเป็นหนี้ไวท์" อัตโนมัติแล้วค่ะ 💙',
+      }
+      const msgKey = isSelf
+        ? (paymentType === 'prepaid' ? 'selfPrepaid' : 'selfInstallment')
+        : (codPayer === 'white' ? 'codWhite' : 'codSelf')
+
+      alert(msgMap[msgKey])
       setShowConfirmReceive(false); setPendingReceive(null); setSelected(null); fetchData()
     } catch { alert('เกิดข้อผิดพลาดค่ะ') }
     setSaving(false)
@@ -391,8 +419,9 @@ export default function ParcelsPage() {
             })
           }
         }
-        // ✅ ลบ expense ที่บันทึกไปด้วย (ถ้ามี)
         await supabase.from('expenses').delete().eq('note', `รับพัสดุ: ${receipt.order_name || 'ไม่ระบุชื่อ'}`)
+        // ลบหนี้ที่สร้างจาก receipt นี้ด้วย
+        await supabase.from('debts').delete().eq('receipt_id', receipt.id)
       }
       await supabase.from('stock_receipts').update({
         status: 'pending', received_at: null, problem_note: null, cod_actual: null, payment_type: null
@@ -405,6 +434,7 @@ export default function ParcelsPage() {
 
   async function deleteReceipt(id: string, name: string) {
     if (!confirm(`ลบออเดอร์ "${name || 'ไม่ระบุชื่อ'}"?`)) return
+    await supabase.from('debts').delete().eq('receipt_id', id)
     await supabase.from('stock_receipts').delete().eq('id', id)
     setSelected(null); fetchData()
   }
@@ -424,7 +454,8 @@ export default function ParcelsPage() {
           <h1 className="text-lg font-bold text-gray-800">📥 รับพัสดุ</h1>
         </div>
 
-        <div className="grid grid-cols-4 gap-2 mb-3">
+        {/* ─── Summary ─── */}
+        <div className="grid grid-cols-5 gap-2 mb-3">
           <div className="bg-white rounded-2xl p-2 shadow-sm text-center">
             <div className="text-xs text-gray-400">สั่งวันนี้</div>
             <div className="text-lg font-bold text-rose-400">{orderedToday}</div>
@@ -440,6 +471,10 @@ export default function ParcelsPage() {
           <div className={`rounded-2xl p-2 shadow-sm text-center ${overdueCount > 0 ? 'bg-red-50' : 'bg-white'}`}>
             <div className="text-xs text-gray-400">ค้าง7วัน</div>
             <div className={`text-lg font-bold ${overdueCount > 0 ? 'text-red-500' : 'text-gray-800'}`}>{overdueCount}</div>
+          </div>
+          <div className={`rounded-2xl p-2 shadow-sm text-center ${sisterPending > 0 ? 'bg-purple-50' : 'bg-white'}`}>
+            <div className="text-xs text-gray-400">พี่สาว</div>
+            <div className={`text-lg font-bold ${sisterPending > 0 ? 'text-purple-500' : 'text-gray-400'}`}>{sisterPending}</div>
           </div>
         </div>
 
@@ -467,6 +502,22 @@ export default function ParcelsPage() {
                   {operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
               </div>
+
+              {/* filter ของใคร */}
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { key: 'all', label: '🐱 ทั้งหมด' },
+                  { key: 'self', label: '🐱 ของเรา' },
+                  { key: 'sister', label: '👩 พี่สาว' },
+                ] as { key: 'all' | 'self' | 'sister'; label: string }[]).map(btn => (
+                  <button key={btn.key}
+                    onClick={() => setFilterOrderFor(btn.key)}
+                    className={`py-2 rounded-xl text-xs font-semibold transition-all ${filterOrderFor === btn.key ? 'bg-gradient-to-r from-purple-400 to-pink-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-gray-400">📅 วันที่สั่ง</label>
@@ -499,12 +550,10 @@ export default function ParcelsPage() {
               ))}
             </div>
 
-{/* ✅ รวมจำนวนบิล */}
-<div className="flex justify-between items-center px-1">
-  <span className="text-xs text-gray-400">รวม</span>
-  <span className="text-xs text-gray-400">{filtered.length} บิล</span>
-</div>
-
+            <div className="flex justify-between items-center px-1 mb-2">
+              <span className="text-xs text-gray-400">รวม</span>
+              <span className="text-xs text-gray-400">{filtered.length} บิล</span>
+            </div>
 
             {loading ? (
               <p className="text-center text-gray-400 py-8 text-sm">กำลังโหลด...</p>
@@ -519,24 +568,30 @@ export default function ParcelsPage() {
                   const cod = getCOD(r)
                   const isOverdue = r.status === 'pending' && r.order_date < sevenDaysAgoStr
                   const totalItems = r.stock_receipt_items.reduce((s, i) => s + i.quantity, 0)
+                  const isSister = r.order_for === 'sister'
                   return (
                     <button key={r.id} onClick={() => setSelected(r)}
-                      className={`w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-95 transition-transform ${isOverdue ? 'ring-2 ring-red-200' : ''}`}>
+                      className={`w-full bg-white rounded-2xl p-4 shadow-sm text-left active:scale-95 transition-transform ${isOverdue ? 'ring-2 ring-red-200' : ''} ${isSister ? 'ring-1 ring-purple-200' : ''}`}>
                       <div className="flex justify-between items-start mb-2">
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold text-gray-800">{r.order_name || 'ไม่ระบุชื่อ'}</p>
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            {isSister && <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-semibold">👩 พี่สาว</span>}
+                            <p className="font-bold text-gray-800 truncate">{r.order_name || 'ไม่ระบุชื่อ'}</p>
+                          </div>
                           <p className="text-xs text-gray-400 mt-0.5">
                             {r.platforms?.name} · สั่ง {new Date(r.order_date).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
                             {r.received_at && ` · รับ ${new Date(r.received_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}`}
                           </p>
                         </div>
                         <div className="flex items-center gap-1 ml-2 flex-shrink-0">
-                          {/* ✅ badge บอก payment type */}
                           {r.payment_type === 'installment' && (
                             <span className="text-xs font-bold px-2 py-1 rounded-full bg-purple-100 text-purple-600">💳 ผ่อน</span>
                           )}
                           {r.payment_type === 'prepaid' && (
                             <span className="text-xs font-bold px-2 py-1 rounded-full bg-teal-100 text-teal-600">✅ จ่ายแล้ว</span>
+                          )}
+                          {r.payment_method === 'promptpay' && (
+                            <span className="text-xs font-bold px-2 py-1 rounded-full bg-blue-100 text-blue-600">📱</span>
                           )}
                           <span className={`text-xs font-bold px-2 py-1 rounded-full ${r.status === 'received' ? 'bg-teal-100 text-teal-600' : r.status === 'problem' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
                             {r.status === 'received' ? '✅' : r.status === 'problem' ? '⚠️' : '⏳'}
@@ -550,6 +605,7 @@ export default function ParcelsPage() {
                       <div className="mt-2 pt-2 border-t border-gray-50 text-xs text-gray-400">
                         {r.stock_receipt_items.length} รายการ · {totalItems} ชิ้น
                         {r.service_fee_actual > 0 && ` · ค่ากด ${r.service_fee_actual}฿`}
+                        {r.fee_payer === 'white' && <span className="text-sky-500"> · ไวท์จ่ายค่ากด</span>}
                       </div>
                       {isOverdue && <p className="text-xs text-red-500 font-bold mt-1">⚠️ ค้างมา {Math.ceil((Date.now() - new Date(r.order_date).getTime()) / (1000 * 60 * 60 * 24))} วัน</p>}
                     </button>
@@ -716,13 +772,22 @@ export default function ParcelsPage() {
                 <h3 className="font-bold text-lg text-gray-800">รายละเอียดพัสดุ</h3>
                 <button onClick={() => setSelected(null)} className="text-gray-400 text-xl">✕</button>
               </div>
+
+              {/* badge ของใคร */}
+              {selected.order_for === 'sister' && (
+                <div className="bg-purple-50 rounded-xl px-3 py-2 mb-3 text-xs text-purple-600 font-semibold">
+                  👩 ออเดอร์ของพี่สาว
+                </div>
+              )}
+
               <div className="bg-white rounded-2xl p-3 mb-3 space-y-1.5 shadow-sm">
                 {[
                   ['ชื่อที่สั่ง', selected.order_name || '-'],
                   ['แพลตฟอร์ม', selected.platforms?.name || '-'],
                   ['คนกด', selected.operators?.name || '-'],
                   ['คูปอง', selected.coupons?.name || '-'],
-                  ['ค่ากด', `${selected.service_fee_actual?.toFixed(2) || '0'}฿`],
+                  ['ค่ากด', `${selected.service_fee_actual?.toFixed(2) || '0'}฿${selected.fee_payer === 'white' ? ' (ไวท์จ่าย)' : ''}`],
+                  ['วิธีชำระ', selected.payment_method === 'cod' ? '🚪 COD' : selected.payment_method === 'promptpay' ? '📱 พร้อมเพย์' : selected.payment_method === 'installment' ? '📅 ผ่อน' : '-'],
                   ['วันที่สั่ง', new Date(selected.order_date).toLocaleDateString('th-TH')],
                   ...(selected.received_at ? [['วันที่รับของ', new Date(selected.received_at).toLocaleDateString('th-TH')]] : []),
                   ...(selected.payment_type ? [['การชำระ', selected.payment_type === 'prepaid' ? '✅ จ่ายแล้ว' : selected.payment_type === 'installment' ? '💳 ผ่อน' : 'COD']] : []),
@@ -734,6 +799,7 @@ export default function ParcelsPage() {
                   </div>
                 ))}
               </div>
+
               <div className="mb-3">
                 <p className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า</p>
                 <div className="space-y-2">
@@ -754,12 +820,15 @@ export default function ParcelsPage() {
                   ))}
                 </div>
               </div>
+
               <div className="bg-rose-50 rounded-2xl p-3 mb-3 flex justify-between items-center">
                 <span className="font-bold text-rose-700">💰 ยอด COD ปลายทาง</span>
                 <span className="text-2xl font-bold text-rose-600">{getCOD(selected).toFixed(2)}฿</span>
               </div>
+
               {selected.note && <div className="bg-amber-50 rounded-2xl p-3 mb-3"><p className="text-xs text-amber-700 font-bold mb-1">หมายเหตุ</p><p className="text-sm">{selected.note}</p></div>}
               {selected.problem_note && <div className="bg-red-50 rounded-2xl p-3 mb-3"><p className="text-xs text-red-700 font-bold mb-1">⚠️ ปัญหาที่พบ</p><p className="text-sm">{selected.problem_note}</p></div>}
+
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => openEdit(selected)} className="bg-gradient-to-r from-orange-400 to-rose-400 text-white font-bold py-3 rounded-2xl text-sm active:scale-95">✏️ แก้ไขข้อมูล</button>
@@ -793,7 +862,10 @@ export default function ParcelsPage() {
           <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
             <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-xl">
               <h3 className="font-bold text-gray-800 mb-1">✅ ยืนยันรับสินค้า</h3>
-              <p className="text-sm text-gray-400 mb-3">{pendingReceive.order_name || 'ไม่ระบุชื่อ'}</p>
+              <p className="text-sm text-gray-400 mb-1">{pendingReceive.order_name || 'ไม่ระบุชื่อ'}</p>
+              {pendingReceive.order_for === 'sister' && (
+                <p className="text-xs text-purple-500 font-semibold mb-3">👩 ออเดอร์ของพี่สาว</p>
+              )}
 
               <div className="bg-gray-50 rounded-2xl p-3 mb-3 text-sm space-y-1">
                 <div className="flex justify-between"><span className="text-gray-400">ราคาสินค้ารวม</span><span className="font-bold">{getCOD(pendingReceive).toFixed(2)}฿</span></div>
@@ -806,8 +878,8 @@ export default function ParcelsPage() {
                   className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" />
               </div>
 
-              {/* ✅ checkbox สั่งเอง — เลือกจ่ายแล้วหรือผ่อน */}
               {isSelfOrder(pendingReceive) ? (
+                /* สั่งเอง — เลือกจ่ายแล้วหรือผ่อน */
                 <div className="bg-blue-50 rounded-2xl p-3 mb-3">
                   <p className="text-xs text-blue-700 font-bold mb-2">🛒 สั่งเอง — ชำระแบบไหนคะ?</p>
                   <div className="grid grid-cols-2 gap-2">
@@ -828,18 +900,43 @@ export default function ParcelsPage() {
                   )}
                 </div>
               ) : (
-                // COD ปกติ
-                <div className="mb-3">
-                  <label className="text-xs text-gray-400">ยอด COD ที่จ่ายจริง (฿)</label>
-                  <input type="number" step="0.01" value={actualCOD} onChange={e => setActualCOD(Number(e.target.value))}
-                    className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" autoFocus />
-                  <div className="flex gap-2 mt-1.5">
-                    <button onClick={() => setActualCOD(Math.ceil(getCOD(pendingReceive)))}
-                      className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ปัดขึ้น {Math.ceil(getCOD(pendingReceive))}฿</button>
-                    <button onClick={() => setActualCOD(getCOD(pendingReceive))}
-                      className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
+                /* COD ปกติ — ระบุยอด + ใครจ่าย */
+                <>
+                  <div className="mb-3">
+                    <label className="text-xs text-gray-400">ยอด COD ที่จ่ายจริง (฿)</label>
+                    <input type="number" step="0.01" value={actualCOD} onChange={e => setActualCOD(Number(e.target.value))}
+                      className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" autoFocus />
+                    <div className="flex gap-2 mt-1.5">
+                      <button onClick={() => setActualCOD(Math.ceil(getCOD(pendingReceive)))}
+                        className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ปัดขึ้น {Math.ceil(getCOD(pendingReceive))}฿</button>
+                      <button onClick={() => setActualCOD(getCOD(pendingReceive))}
+                        className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
+                    </div>
                   </div>
-                </div>
+
+                  {/* ─── ใครจ่าย COD ─── */}
+                  <div className="bg-teal-50 rounded-2xl p-3 mb-3">
+                    <p className="text-xs text-teal-700 font-bold mb-2">💰 ใครจ่าย COD {actualCOD.toFixed(2)}฿ คะ?</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button onClick={() => setCodPayer('self')}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${codPayer === 'self' ? 'bg-teal-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
+                        🐱 เราจ่าย
+                      </button>
+                      <button onClick={() => setCodPayer('white')}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${codPayer === 'white' ? 'bg-sky-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
+                        💙 ไวท์จ่าย
+                      </button>
+                    </div>
+                    {codPayer === 'white' && (
+                      <p className="text-xs text-sky-600 mt-2 font-semibold">
+                        💙 จะสร้างหนี้ "เราเป็นหนี้ไวท์ {actualCOD.toFixed(2)}฿" อัตโนมัติค่ะ
+                      </p>
+                    )}
+                    {codPayer === 'self' && (
+                      <p className="text-xs text-teal-600 mt-2">✅ บันทึกตามปกติค่ะ</p>
+                    )}
+                  </div>
+                </>
               )}
 
               <div className="grid grid-cols-2 gap-2">

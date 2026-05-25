@@ -190,10 +190,17 @@ async function markAsPending(delivery: Delivery) {
     setSelectedDelivery(prev => prev ? { ...prev, scheduled_date: date } : null)
   }
 
-  async function markAsPaid(orderId: string) {
-    await supabase.from('orders').update({ payment_status: 'paid', paid_at: new Date().toISOString() }).eq('id', orderId)
-    fetchData()
-    setSelectedDelivery(prev => prev ? { ...prev, orders: prev.orders ? { ...prev.orders, payment_status: 'paid' } : null } : null)
+async function markAsPaid(orderId: string) {
+  const dateInput = prompt('วันที่รับเงิน (ปปปป-ดด-วว)\nเว้นว่างถ้าเป็นวันนี้ค่ะ')
+  if (dateInput === null) return
+  const paidDate = dateInput.trim()
+    ? new Date(dateInput.trim()).toISOString()
+    : new Date().toISOString()
+  if (dateInput.trim() && isNaN(new Date(dateInput.trim()).getTime())) {
+    alert('รูปแบบวันที่ไม่ถูกต้องค่ะ กรุณากรอกแบบ 2026-05-22')
+    return
+  }
+  await supabase.from('orders').update({ payment_status: 'paid', paid_at: paidDate }).eq('id', orderId)
   }
 
   async function markAsPacked(id: string, bagCount: number) {
@@ -322,11 +329,11 @@ async function markAsPending(delivery: Delivery) {
             className={`py-2.5 rounded-2xl text-sm font-bold transition-all relative ${activeTab === 'reservation' ? 'bg-gradient-to-r from-purple-400 to-fuchsia-500 text-white shadow-sm' : 'bg-white text-gray-400 shadow-sm'}`}>
             🏪 ฝากของ
             {/* ✅ badge แสดงจำนวน reservation ทั้งหมด */}
-            {reservations.length > 0 && (
-              <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-                {reservations.length}
-              </span>
-            )}
+          {reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length > 0 && (
+            <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+              {reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length}
+            </span>
+)}
           </button>
         </div>
       </div>
@@ -496,7 +503,7 @@ async function markAsPending(delivery: Delivery) {
         {activeTab === 'reservation' && (
           <>
             <div className="bg-purple-50 rounded-2xl p-3">
-              <p className="text-sm font-bold text-purple-700">🏪 รายการฝากของทั้งหมด ({reservations.length} บิล)</p>
+              <p className="text-sm font-bold text-purple-700">🏪 รายการฝากของทั้งหมด ({reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length} บิล)</p>
               <p className="text-xs text-purple-400 mt-0.5">กดเพื่อแพ๊คของหรือนัดวันส่งค่ะ</p>
             </div>
 
@@ -507,7 +514,9 @@ async function markAsPending(delivery: Delivery) {
               </div>
             ) : (
               <div className="space-y-2">
-                {reservations.map(r => {
+                {reservations
+                  .filter(r => r.deliveries?.[0]?.status !== 'delivered')
+                  .map(r => {
                   const delivery = r.deliveries?.[0]
                   const isPacked = delivery?.status === 'packed'
                   const hasSchedule = delivery && delivery.scheduled_date !== '2099-12-31'

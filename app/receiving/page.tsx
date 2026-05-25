@@ -32,6 +32,17 @@ type ReceiptItem = {
   unit_cost: number
 }
 
+// ─── วิธีชำระเงิน ───
+type PaymentMethod = 'cod' | 'promptpay' | 'installment'
+type InstallmentType = 'spaylater_dat' | 'spaylater_white'
+type OrderFor = 'self' | 'sister'
+type FeePayer = 'self' | 'white'
+
+const INSTALLMENT_LABELS: Record<InstallmentType, string> = {
+  spaylater_dat: 'SPaylater แดท',
+  spaylater_white: 'SPaylater ไวท์',
+}
+
 function calcItemCost(price: number, coupon: Coupon): number {
   switch (coupon.discount_type) {
     case 'flat': {
@@ -77,7 +88,6 @@ export default function OrderPage() {
   const [products, setProducts] = useState<Product[]>([])
 
   const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null)
-  // ✅ เพิ่ม state แยกสำหรับ coupon select value
   const [couponSelectValue, setCouponSelectValue] = useState<string>('')
   const [manualFee, setManualFee] = useState<number>(0)
   const [platformId, setPlatformId] = useState('')
@@ -90,6 +100,15 @@ export default function OrderPage() {
   const [searchProduct, setSearchProduct] = useState('')
   const [showProductSearch, setShowProductSearch] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  // ─── ฟิลด์ใหม่ ───
+  const [orderFor, setOrderFor] = useState<OrderFor>('self')          // ของใคร
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cod')  // วิธีชำระ
+  const [installmentType, setInstallmentType] = useState<InstallmentType>('spaylater_dat')
+  const [installmentCount, setInstallmentCount] = useState<number>(3)
+  const [installmentFirst, setInstallmentFirst] = useState<number>(0)  // ยอดงวดปกติ
+  const [installmentLast, setInstallmentLast] = useState<number>(0)    // ยอดงวดสุดท้าย
+  const [feePayer, setFeePayer] = useState<FeePayer>('self')           // ใครจ่ายค่ากด
 
   const filteredCoupons = coupons.filter(c => !platformId || c.platform_id === platformId)
 
@@ -159,7 +178,6 @@ export default function OrderPage() {
     recalcItems(items, coupon, defaultFee)
   }
 
-  // ✅ เลือก "ไม่มีคูปอง / สั่งเอง"
   function selectNoCoupon() {
     setSelectedCoupon(null)
     setCouponSelectValue('none')
@@ -175,7 +193,6 @@ export default function OrderPage() {
   function handleCouponChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const val = e.target.value
     if (val === '') {
-      // กลับไปเลือกคูปอง
       setSelectedCoupon(null)
       setCouponSelectValue('')
       setManualFee(0)
@@ -204,7 +221,6 @@ export default function OrderPage() {
 
   function updateItem(index: number, field: 'quantity' | 'original_price', value: number) {
     const updated = items.map((item, i) => i === index ? { ...item, [field]: value } : item)
-    // ถ้าไม่มีคูปอง คำนวณ unit_cost จาก original_price / quantity
     if (!selectedCoupon) {
       setItems(updated.map(item => ({
         ...item,
@@ -230,6 +246,87 @@ export default function OrderPage() {
   const actualFee = selectedCoupon ? calcServiceFee(selectedCoupon, manualFee) : 0
   const totalCOD = selectedCoupon ? totalItemCost + actualFee : totalOriginalPrice
 
+  // ─── IDs ของ category พิเศษ ───
+  const SISTER_CATEGORY_ID = 'ff6cf3f5-db5b-48a4-adce-b1e5057d192b'
+  const WHITE_CATEGORY_ID = '61f0acb2-54c7-4dc6-9d0d-c06a50a2522b'
+
+  // ─── สร้างหนี้อัตโนมัติ ───
+  async function createDebts(receiptId: string) {
+    const dateLabel = new Date(orderDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+
+    // 1) ของพี่สาว → พี่สาวเป็นหนี้เรา = totalCOD
+    if (orderFor === 'sister') {
+      const sisterDebtName = `พี่สาวสั่งของ · ${orderName || 'ไม่ระบุชื่อ'} · ${dateLabel}`
+      await supabase.from('debts').insert({
+        name: sisterDebtName,
+        amount: totalCOD,
+        paid_amount: 0,
+        category: 'พี่สาว',
+        debt_category_id: SISTER_CATEGORY_ID,
+        status: 'unpaid',
+        note: `receipt_id:${receiptId}`,
+        receipt_id: receiptId,
+        debtor: 'พี่สาว',
+        creditor: 'เรา',
+        has_installments: false,
+      })
+    }
+
+    // 2) ไวท์จ่ายค่ากด → เราเป็นหนี้ไวท์ = service_fee
+    if (feePayer === 'white' && actualFee > 0) {
+      await supabase.from('debts').insert({
+        name: `ค่ากด · ${orderName || 'ไม่ระบุชื่อ'} · ${dateLabel}`,
+        amount: actualFee,
+        paid_amount: 0,
+        category: 'หนี้ไวท์',
+        debt_category_id: WHITE_CATEGORY_ID,
+        status: 'unpaid',
+        note: `receipt_id:${receiptId}`,
+        receipt_id: receiptId,
+        debtor: 'เรา',
+        creditor: 'ไวท์',
+        fee_payer: 'white',
+        has_installments: false,
+      })
+    }
+
+    // 3) ผ่อน → สร้างหนี้แบบผ่อน + สร้าง installments
+    if (paymentMethod === 'installment') {
+      const label = INSTALLMENT_LABELS[installmentType]
+      const instCategoryId = installmentType === 'spaylater_white' ? WHITE_CATEGORY_ID : null
+      const { data: debt } = await supabase.from('debts').insert({
+        name: `ผ่อน ${label} · ${orderName || 'ไม่ระบุชื่อ'}`,
+        amount: totalCOD,
+        paid_amount: 0,
+        category: label,
+        debt_category_id: instCategoryId,
+        status: 'unpaid',
+        note: `receipt_id:${receiptId}`,
+        receipt_id: receiptId,
+        debtor: 'เรา',
+        creditor: installmentType === 'spaylater_white' ? 'ไวท์' : 'แดท',
+        has_installments: true,
+        total_installments: installmentCount,
+      }).select().single()
+
+      if (debt && installmentFirst > 0) {
+        const installments = Array.from({ length: installmentCount }, (_, i) => {
+          const dueDate = new Date(orderDate)
+          dueDate.setMonth(dueDate.getMonth() + i)
+          const isLast = i === installmentCount - 1
+          return {
+            debt_id: debt.id,
+            installment_no: i + 1,
+            amount: isLast && installmentLast > 0 ? installmentLast : installmentFirst,
+            due_date: dueDate.toISOString().split('T')[0],
+            paid: false,
+          }
+        })
+        await supabase.from('debt_installments').insert(installments)
+      }
+    }
+  }
+
   async function handleSave(continueAdd: boolean = false) {
     if (items.length === 0) return
     setSaving(true)
@@ -244,6 +341,14 @@ export default function OrderPage() {
         tracking_no: trackingNo || null,
         status: 'pending',
         note,
+        // ─── column ใหม่ ───
+        order_for: orderFor,
+        payment_method: paymentMethod,
+        installment_type: paymentMethod === 'installment' ? installmentType : null,
+        installment_count: paymentMethod === 'installment' ? installmentCount : null,
+        installment_first: paymentMethod === 'installment' ? installmentFirst : null,
+        installment_last: paymentMethod === 'installment' && installmentLast > 0 ? installmentLast : null,
+        fee_payer: feePayer,
       }).select().single()
 
       if (error) throw error
@@ -260,7 +365,26 @@ export default function OrderPage() {
         }))
       )
 
+// สร้าง stock lots สำหรับ FIFO
+const platformName = platforms.find(p => p.id === platformId)?.name || null
+for (const item of items) {
+  await supabase.from('stock_lots').insert({
+    product_id: item.product_id,
+    receipt_id: receipt.id,
+    platform_name: platformName,
+    quantity_in: item.quantity,
+    quantity_remaining: item.quantity,
+    order_date: orderDate,
+  })
+}
+
+      // สร้างหนี้อัตโนมัติ
+      await createDebts(receipt.id)
+
       setOrderName(''); setNote(''); setItems([])
+      setOrderFor('self'); setPaymentMethod('cod'); setFeePayer('self')
+      setInstallmentFirst(0); setInstallmentLast(0); setInstallmentCount(3)
+
       if (continueAdd) {
         window.scrollTo({ top: 0, behavior: 'smooth' })
       } else {
@@ -287,6 +411,7 @@ export default function OrderPage() {
           <h1 className="text-xl font-bold text-gray-800">📦 สั่งออเดอร์</h1>
         </div>
 
+        {/* ─── ข้อมูลการสั่ง ─── */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
           <h2 className="font-bold text-gray-700 mb-3">ข้อมูลการสั่ง</h2>
           <div className="space-y-3">
@@ -329,7 +454,6 @@ export default function OrderPage() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-xs text-gray-500">คูปอง</label>
-                {/* ✅ ใช้ couponSelectValue แยกต่างหาก */}
                 <select
                   value={couponSelectValue}
                   onChange={handleCouponChange}
@@ -358,7 +482,6 @@ export default function OrderPage() {
               </div>
             </div>
 
-            {/* ✅ แสดง badge ถ้าเลือกสั่งเอง */}
             {couponSelectValue === 'none' && (
               <div className="bg-blue-50 rounded-xl px-3 py-2 text-xs text-blue-600 font-semibold">
                 🛒 สั่งเอง — ไม่มีคูปอง ไม่มีค่ากดค่ะ
@@ -368,6 +491,7 @@ export default function OrderPage() {
           </div>
         </div>
 
+        {/* ─── รายการสินค้า ─── */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
           <div className="flex justify-between items-center mb-3">
             <h2 className="font-bold text-gray-700">รายการสินค้า</h2>
@@ -447,6 +571,142 @@ export default function OrderPage() {
           )}
         </div>
 
+
+        {/* ─── ส่วนที่ 1: ของใคร ─── */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
+          <h2 className="font-bold text-gray-700 mb-3">👤 ของใคร</h2>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setOrderFor('self')}
+              className={`py-3 rounded-xl text-sm font-bold transition-all ${orderFor === 'self' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
+              🐱 ของเรา
+            </button>
+            <button
+              onClick={() => setOrderFor('sister')}
+              className={`py-3 rounded-xl text-sm font-bold transition-all ${orderFor === 'sister' ? 'bg-gradient-to-r from-purple-400 to-pink-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
+              👩 ของพี่สาว
+            </button>
+          </div>
+          {orderFor === 'sister' && (
+            <div className="mt-2 bg-purple-50 rounded-xl px-3 py-2 text-xs text-purple-600 font-semibold">
+              💜 ระบบจะสร้างหนี้ "พี่สาวเป็นหนี้เรา" อัตโนมัติค่ะ
+            </div>
+          )}
+        </div>
+
+        {/* ─── ส่วนที่ 2: วิธีชำระเงิน ─── */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
+          <h2 className="font-bold text-gray-700 mb-3">💳 วิธีชำระเงิน</h2>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {([
+              { key: 'cod', label: '🚪 COD', color: 'from-teal-400 to-teal-500' },
+              { key: 'promptpay', label: '📱 พร้อมเพย์', color: 'from-blue-400 to-blue-500' },
+              { key: 'installment', label: '📅 ผ่อน', color: 'from-purple-400 to-purple-500' },
+            ] as { key: PaymentMethod; label: string; color: string }[]).map(btn => (
+              <button key={btn.key}
+                onClick={() => setPaymentMethod(btn.key)}
+                className={`py-3 rounded-xl text-xs font-bold transition-all ${paymentMethod === btn.key ? `bg-gradient-to-r ${btn.color} text-white` : 'bg-gray-50 text-gray-500'}`}>
+                {btn.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ผ่อน — รายละเอียดเพิ่มเติม */}
+          {paymentMethod === 'installment' && (
+            <div className="space-y-3 bg-purple-50 rounded-xl p-3">
+              <div>
+                <label className="text-xs text-purple-600 font-semibold">ผ่อนกับ</label>
+                <select
+                  value={installmentType}
+                  onChange={e => setInstallmentType(e.target.value as InstallmentType)}
+                  className="w-full border border-purple-200 rounded-xl p-2 mt-1 text-sm bg-white">
+                  <option value="spaylater_dat">SPaylater แดท</option>
+                  <option value="spaylater_white">SPaylater ไวท์</option>
+                </select>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs text-purple-600 font-semibold">จำนวนงวด</label>
+                  <input
+                    type="number" min="1" value={installmentCount}
+                    onChange={e => setInstallmentCount(Number(e.target.value))}
+                    className="w-full border border-purple-200 rounded-xl p-2 mt-1 text-sm bg-white text-center" />
+                </div>
+                <div>
+                  <label className="text-xs text-purple-600 font-semibold">ยอดงวดปกติ (฿)</label>
+                  <input
+                    type="number" step="0.01" value={installmentFirst || ''}
+                    onChange={e => setInstallmentFirst(Number(e.target.value))}
+                    placeholder="เช่น 128.10"
+                    className="w-full border border-purple-200 rounded-xl p-2 mt-1 text-sm bg-white" />
+                </div>
+                <div>
+                  <label className="text-xs text-purple-600 font-semibold">งวดสุดท้าย (฿)</label>
+                  <input
+                    type="number" step="0.01" value={installmentLast || ''}
+                    onChange={e => setInstallmentLast(Number(e.target.value))}
+                    placeholder="ถ้าเท่ากันเว้นว่าง"
+                    className="w-full border border-purple-200 rounded-xl p-2 mt-1 text-sm bg-white" />
+                </div>
+              </div>
+              {installmentFirst > 0 && installmentCount > 0 && (
+                <div className="bg-white rounded-xl p-2 text-xs text-gray-500 space-y-0.5">
+                  <div className="font-semibold text-purple-600 mb-1">ตัวอย่างงวด</div>
+                  {Array.from({ length: Math.min(3, installmentCount) }, (_, i) => {
+                    const d = new Date(orderDate)
+                    d.setMonth(d.getMonth() + i)
+                    const isLast = i === installmentCount - 1
+                    const amt = isLast && installmentLast > 0 ? installmentLast : installmentFirst
+                    return (
+                      <div key={i}>งวด {i + 1}: {amt.toFixed(2)}฿ · {d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}</div>
+                    )
+                  })}
+                  {installmentCount > 3 && <div className="text-gray-400">...</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {paymentMethod === 'cod' && (
+            <div className="bg-teal-50 rounded-xl px-3 py-2 text-xs text-teal-600 font-semibold">
+              🚪 จ่ายเงินสดตอนของมาถึงค่ะ
+            </div>
+          )}
+          {paymentMethod === 'promptpay' && (
+            <div className="bg-blue-50 rounded-xl px-3 py-2 text-xs text-blue-600 font-semibold">
+              📱 โอนจ่ายล่วงหน้าค่ะ
+            </div>
+          )}
+        </div>
+
+        {/* ─── ส่วนที่ 3: ใครจ่ายค่ากด ─── */}
+        {actualFee > 0 && (
+          <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
+            <h2 className="font-bold text-gray-700 mb-1">💵 ค่ากด {actualFee.toFixed(2)}฿ — ใครจ่าย?</h2>
+            <p className="text-xs text-gray-400 mb-3">ใครจ่ายค่ากดออกไปก่อนค่ะ</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setFeePayer('self')}
+                className={`py-3 rounded-xl text-sm font-bold transition-all ${feePayer === 'self' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                🐱 เราจ่าย
+              </button>
+              <button
+                onClick={() => setFeePayer('white')}
+                className={`py-3 rounded-xl text-sm font-bold transition-all ${feePayer === 'white' ? 'bg-gradient-to-r from-sky-400 to-blue-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
+                💙 ไวท์จ่าย
+              </button>
+            </div>
+            {feePayer === 'white' && (
+              <div className="mt-2 bg-sky-50 rounded-xl px-3 py-2 text-xs text-sky-600 font-semibold">
+                💙 ระบบจะสร้างหนี้ "เราเป็นหนี้ไวท์ {actualFee.toFixed(2)}฿" อัตโนมัติค่ะ
+              </div>
+            )}
+          </div>
+        )}
+
+
+
+{/* ─── สรุปราคา ─── */}
         {items.length > 0 && (
           <div className="bg-white rounded-2xl p-4 shadow-sm mb-3">
             <h2 className="font-bold text-gray-700 mb-3">สรุปราคา</h2>
@@ -460,21 +720,47 @@ export default function OrderPage() {
                 <span className="text-green-500">-{selectedCoupon ? (selectedCoupon.display_value || selectedCoupon.discount_value).toFixed(2) : '0.00'}฿</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-500">ค่ากดของ</span>
-                <span>{actualFee.toFixed(2)}฿</span>
+                <span className="text-gray-500">ค่ากด {feePayer === 'white' ? '(ไวท์จ่าย)' : ''}</span>
+                <span className={feePayer === 'white' ? 'text-sky-500' : ''}>{actualFee.toFixed(2)}฿</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between pt-2 border-t border-gray-100">
                 <span className="text-gray-500">รวมจ่ายปลายทาง</span>
-                <span>{totalCOD.toFixed(2)}฿</span>
+                <span className="text-gray-700">{totalItemCost.toFixed(2)}฿</span>
               </div>
-              <div className="flex justify-between font-bold text-xl border-t border-gray-100 pt-3 mt-3">
-                <span>ราคาปลายทาง</span>
-                <span className="text-rose-500">{totalItemCost.toFixed(2)}฿</span>
+              <div className="flex justify-between font-bold text-xl pt-1">
+                <span>ราคาปลายทาง (COD)</span>
+                <span className="text-rose-500">{totalCOD.toFixed(2)}฿</span>
               </div>
+
+              {/* สรุปหนี้ที่จะสร้าง */}
+              {(orderFor === 'sister' || feePayer === 'white' || paymentMethod === 'installment') && (
+                <div className="mt-3 pt-3 border-t border-gray-100 space-y-1.5">
+                  <div className="text-xs text-gray-400 font-semibold mb-1">📋 หนี้ที่จะสร้างอัตโนมัติ</div>
+                  {orderFor === 'sister' && (
+                    <div className="flex justify-between text-xs bg-purple-50 rounded-lg px-2 py-1.5">
+                      <span className="text-purple-600">💜 พี่สาวเป็นหนี้เรา</span>
+                      <span className="font-bold text-purple-600">{totalCOD.toFixed(2)}฿</span>
+                    </div>
+                  )}
+                  {feePayer === 'white' && actualFee > 0 && (
+                    <div className="flex justify-between text-xs bg-sky-50 rounded-lg px-2 py-1.5">
+                      <span className="text-sky-600">💙 เราเป็นหนี้ไวท์ (ค่ากด)</span>
+                      <span className="font-bold text-sky-600">{actualFee.toFixed(2)}฿</span>
+                    </div>
+                  )}
+                  {paymentMethod === 'installment' && (
+                    <div className="flex justify-between text-xs bg-purple-50 rounded-lg px-2 py-1.5">
+                      <span className="text-purple-600">📅 ผ่อน {INSTALLMENT_LABELS[installmentType]} {installmentCount} งวด</span>
+                      <span className="font-bold text-purple-600">{totalCOD.toFixed(2)}฿</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
 
+        {/* ─── หมายเหตุ ─── */}
         <div className="bg-white rounded-2xl p-4 shadow-sm mb-4">
           <label className="text-xs text-gray-500">หมายเหตุ</label>
           <textarea value={note} onChange={e => setNote(e.target.value)}
