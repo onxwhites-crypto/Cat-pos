@@ -76,8 +76,9 @@ export default function DeliveryPage() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'packed' | 'delivered' | 'overdue'>('pending')
   const [selectedDelivery, setSelectedDelivery] = useState<Delivery | null>(null)
   const [allDeliveries, setAllDeliveries] = useState<{ zone_id: string; status: string }[]>([])
-  const [overdueDeliveries, setOverdueDeliveries] = useState<Delivery[]>([]) // ค้างส่งทุกวัน
-  const [datesWithOrders, setDatesWithOrders] = useState<{ date: string; count: number }[]>([]) // dot บน calendar
+  const [overdueCount, setOverdueCount] = useState(0) // ✅ เก็บแค่จำนวน ไม่ต้องดึงข้อมูลเต็ม
+  const [overdueDeliveries, setOverdueDeliveries] = useState<Delivery[]>([])
+  const [datesWithOrders, setDatesWithOrders] = useState<{ date: string; count: number }[]>([])
   const [packBagCount, setPackBagCount] = useState(0)
   const [editScheduledDate, setEditScheduledDate] = useState('')
 
@@ -90,13 +91,79 @@ export default function DeliveryPage() {
   const [savingReserve, setSavingReserve] = useState(false)
   const [deliveryRounds, setDeliveryRounds] = useState<{ id: string; delivery_date: string; note: string | null }[]>([])
 
-  useEffect(() => { fetchData() }, [filterDate, filterZone, filterStatus])
+  const today = new Date().toISOString().split('T')[0]
 
-  async function fetchData() {
+  // ✅ โหลดข้อมูลที่ไม่เปลี่ยนตาม filter ครั้งเดียวตอน mount
+  useEffect(() => {
+    fetchStaticData()
+  }, [])
+
+  // ✅ โหลดเฉพาะ deliveries หลักเมื่อ filter เปลี่ยน
+  useEffect(() => {
+    fetchMainDeliveries()
+  }, [filterDate, filterZone, filterStatus])
+
+  // ── โหลดข้อมูลที่ไม่ขึ้นกับ filter ──
+  async function fetchStaticData() {
+    const [
+      { data: z },
+      { data: resv },
+      { data: rounds },
+      { data: overdueD },
+      { data: pendingDates },
+    ] = await Promise.all([
+      supabase.from('zones').select('*').order('sort_order'),
+
+      supabase
+        .from('orders')
+        .select(`
+          id, total, payment_status, note, order_type, created_at,
+          customers(id, name, phone, address, location_type),
+          order_items(id, quantity, product_id, products(name, unit)),
+          deliveries(id, scheduled_date, status, zone_id, bag_count)
+        `)
+        .eq('order_type', 'reservation')
+        .neq('status', 'cancelled')
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('delivery_rounds')
+        .select('*')
+        .gte('delivery_date', today)
+        .order('delivery_date', { ascending: true }),
+
+      // ✅ overdue: ดึงข้อมูลเต็มสำหรับแสดงรายการ
+      supabase
+        .from('deliveries')
+        .select(`*, zones(name), orders(id, total, payment_status, note, order_type, customers(id, name, phone, address, location_type), order_items(id, quantity, product_id, products(name, unit)))`)
+        .lt('scheduled_date', today)
+        .in('status', ['pending', 'packed']),
+
+      // ✅ dot บน calendar
+      supabase
+        .from('deliveries')
+        .select('scheduled_date')
+        .in('status', ['pending', 'packed'])
+        .neq('scheduled_date', '2099-12-31'),
+    ])
+
+    setZones(z || [])
+    setReservations((resv as any) || [])
+    setDeliveryRounds(rounds || [])
+    setOverdueDeliveries((overdueD as any) || [])
+    setOverdueCount(overdueD?.length || 0)
+
+    const dateCountMap: { [date: string]: number } = {}
+    ;(pendingDates || []).forEach((d: any) => {
+      dateCountMap[d.scheduled_date] = (dateCountMap[d.scheduled_date] || 0) + 1
+    })
+    setDatesWithOrders(Object.entries(dateCountMap).map(([date, count]) => ({ date, count })))
+  }
+
+  // ── โหลด deliveries หลัก + allDeliveries พร้อมกัน ──
+  async function fetchMainDeliveries() {
     setLoading(true)
-    const today = new Date().toISOString().split('T')[0]
 
-    // ── Main deliveries query ──
     let query = supabase
       .from('deliveries')
       .select(`*, zones(name), orders(id, total, payment_status, note, order_type, customers(id, name, phone, address, location_type), order_items(id, quantity, product_id, products(name, unit)))`)
@@ -104,7 +171,6 @@ export default function DeliveryPage() {
       .order('created_at', { ascending: true })
 
     if (filterStatus === 'overdue') {
-      // ค้างส่ง = pending หรือ packed ที่วันส่งผ่านมาแล้ว
       query = query.lt('scheduled_date', today).in('status', ['pending', 'packed'])
     } else {
       if (filterDate) query = query.eq('scheduled_date', filterDate)
@@ -112,77 +178,40 @@ export default function DeliveryPage() {
     }
     if (filterZone) query = query.eq('zone_id', filterZone)
 
-    const { data: d } = await query
-    const { data: z } = await supabase.from('zones').select('*').order('sort_order')
-
-    // ── Overdue count (สำหรับ badge) ──
-    const { data: overdueD } = await supabase
-      .from('deliveries')
-      .select(`*, zones(name), orders(id, total, payment_status, note, order_type, customers(id, name, phone, address, location_type), order_items(id, quantity, product_id, products(name, unit)))`)
-      .lt('scheduled_date', today)
-      .in('status', ['pending', 'packed'])
-
-    // ── วันที่มีออเดอร์ค้าง (dot บน calendar) ──
-    const { data: pendingDates } = await supabase
-      .from('deliveries')
-      .select('scheduled_date')
-      .in('status', ['pending', 'packed'])
-      .neq('scheduled_date', '2099-12-31')
-
-    const dateCountMap: { [date: string]: number } = {}
-    ;(pendingDates || []).forEach((d: any) => {
-      dateCountMap[d.scheduled_date] = (dateCountMap[d.scheduled_date] || 0) + 1
-    })
-    setDatesWithOrders(Object.entries(dateCountMap).map(([date, count]) => ({ date, count })))
-
-    // ── Reservations ──
-    const { data: resv } = await supabase
-      .from('orders')
-      .select(`
-        id, total, payment_status, note, order_type, created_at,
-        customers(id, name, phone, address, location_type),
-        order_items(id, quantity, product_id, products(name, unit)),
-        deliveries(id, scheduled_date, status, zone_id, bag_count)
-      `)
-      .eq('order_type', 'reservation')
-      .neq('status', 'cancelled')
-      .order('created_at', { ascending: false })
-
-    const { data: rounds } = await supabase
-      .from('delivery_rounds')
-      .select('*')
-      .gte('delivery_date', today)
-      .order('delivery_date', { ascending: true })
+    // ✅ ยิง 2 query พร้อมกันด้วย Promise.all
+    const [{ data: d }, { data: allD }] = await Promise.all([
+      query,
+      supabase
+        .from('deliveries')
+        .select('zone_id, status')
+        .eq('scheduled_date', filterDate),
+    ])
 
     setDeliveries(d || [])
-    setZones(z || [])
-    setOverdueDeliveries((overdueD as any) || [])
-    setReservations((resv as any) || [])
-    setDeliveryRounds(rounds || [])
-    setLoading(false)
-
-    const { data: allD } = await supabase
-      .from('deliveries')
-      .select('zone_id, status')
-      .eq('scheduled_date', filterDate)
     setAllDeliveries(allD || [])
+    setLoading(false)
   }
 
-async function markAsDelivered(delivery: Delivery) {
-  await supabase.from('deliveries')
-    .update({ status: 'delivered', delivered_at: new Date().toISOString() })
-    .eq('id', delivery.id)
-  fetchData()
-  setSelectedDelivery(null)
-}
+  // ── รวม fetchData สำหรับ refresh หลังทำ action ──
+  async function fetchData() {
+    await Promise.all([fetchMainDeliveries(), fetchStaticData()])
+  }
 
-async function markAsPending(delivery: Delivery) {
-  await supabase.from('deliveries')
-    .update({ status: 'pending', delivered_at: null })
-    .eq('id', delivery.id)
-  fetchData()
-  setSelectedDelivery(null)
-}
+  async function markAsDelivered(delivery: Delivery) {
+    await supabase.from('deliveries')
+      .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+      .eq('id', delivery.id)
+    fetchData()
+    setSelectedDelivery(null)
+  }
+
+  async function markAsPending(delivery: Delivery) {
+    await supabase.from('deliveries')
+      .update({ status: 'pending', delivered_at: null })
+      .eq('id', delivery.id)
+    fetchData()
+    setSelectedDelivery(null)
+  }
 
   async function updateScheduledDate(id: string, date: string) {
     await supabase.from('deliveries').update({ scheduled_date: date }).eq('id', id)
@@ -190,17 +219,18 @@ async function markAsPending(delivery: Delivery) {
     setSelectedDelivery(prev => prev ? { ...prev, scheduled_date: date } : null)
   }
 
-async function markAsPaid(orderId: string) {
-  const dateInput = prompt('วันที่รับเงิน (ปปปป-ดด-วว)\nเว้นว่างถ้าเป็นวันนี้ค่ะ')
-  if (dateInput === null) return
-  const paidDate = dateInput.trim()
-    ? new Date(dateInput.trim()).toISOString()
-    : new Date().toISOString()
-  if (dateInput.trim() && isNaN(new Date(dateInput.trim()).getTime())) {
-    alert('รูปแบบวันที่ไม่ถูกต้องค่ะ กรุณากรอกแบบ 2026-05-22')
-    return
-  }
-  await supabase.from('orders').update({ payment_status: 'paid', paid_at: paidDate }).eq('id', orderId)
+  async function markAsPaid(orderId: string) {
+    const dateInput = prompt('วันที่รับเงิน (ปปปป-ดด-วว)\nเว้นว่างถ้าเป็นวันนี้ค่ะ')
+    if (dateInput === null) return
+    const paidDate = dateInput.trim()
+      ? new Date(dateInput.trim()).toISOString()
+      : new Date().toISOString()
+    if (dateInput.trim() && isNaN(new Date(dateInput.trim()).getTime())) {
+      alert('รูปแบบวันที่ไม่ถูกต้องค่ะ กรุณากรอกแบบ 2026-05-22')
+      return
+    }
+    await supabase.from('orders').update({ payment_status: 'paid', paid_at: paidDate }).eq('id', orderId)
+    fetchData()
   }
 
   async function markAsPacked(id: string, bagCount: number) {
@@ -216,7 +246,6 @@ async function markAsPaid(orderId: string) {
     try {
       const existing = selectedReservation.deliveries?.[0]
       if (existing) {
-        // ✅ แก้โซน + วันส่ง + จำนวนถุงด้วย
         await supabase.from('deliveries').update({
           scheduled_date: reserveScheduledDate,
           zone_id: reserveZoneId || null,
@@ -300,12 +329,10 @@ async function markAsPaid(orderId: string) {
     alert('บันทึกการชำระเงินเรียบร้อยค่ะ ✅')
   }
 
-  const today = new Date().toISOString().split('T')[0]
   const totalPending = deliveries.filter(d => d.status === 'pending').length
   const totalPacked = deliveries.filter(d => d.status === 'packed').length
   const totalDelivered = deliveries.filter(d => d.status === 'delivered').length
   const totalBags = deliveries.filter(d => d.status === 'packed').reduce((sum, d) => sum + d.bag_count, 0)
-  const pendingReservations = reservations.filter(r => !r.deliveries || r.deliveries.length === 0).length
 
   return (
     <main className="min-h-screen bg-[#fff5f3]">
@@ -328,42 +355,41 @@ async function markAsPaid(orderId: string) {
           <button onClick={() => setActiveTab('reservation')}
             className={`py-2.5 rounded-2xl text-sm font-bold transition-all relative ${activeTab === 'reservation' ? 'bg-gradient-to-r from-purple-400 to-fuchsia-500 text-white shadow-sm' : 'bg-white text-gray-400 shadow-sm'}`}>
             🏪 ฝากของ
-            {/* ✅ badge แสดงจำนวน reservation ทั้งหมด */}
-          {reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length > 0 && (
-            <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
-              {reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length}
-            </span>
-)}
+            {reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                {reservations.filter(r => r.deliveries?.[0]?.status !== 'delivered').length}
+              </span>
+            )}
           </button>
         </div>
       </div>
 
       <div className="px-4 pb-8 pt-2 space-y-3">
 
-            {/* Summary */}
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                { label: 'รอแพ๊ค', value: totalPending, color: 'text-amber-500' },
-                { label: 'แพ๊คแล้ว', value: totalPacked, color: 'text-orange-500' },
-                { label: 'ส่งแล้ว', value: totalDelivered, color: 'text-teal-500' },
-                { label: 'รวมถุง', value: totalBags, color: 'text-rose-500' },
-              ].map(item => (
-                <div key={item.label} className="bg-white rounded-2xl p-2.5 shadow-sm text-center">
-                  <p className="text-xs text-gray-400">{item.label}</p>
-                  <p className={`text-lg font-bold ${item.color}`}>{item.value}</p>
-                </div>
-              ))}
+        {/* Summary */}
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { label: 'รอแพ๊ค', value: totalPending, color: 'text-amber-500' },
+            { label: 'แพ๊คแล้ว', value: totalPacked, color: 'text-orange-500' },
+            { label: 'ส่งแล้ว', value: totalDelivered, color: 'text-teal-500' },
+            { label: 'รวมถุง', value: totalBags, color: 'text-rose-500' },
+          ].map(item => (
+            <div key={item.label} className="bg-white rounded-2xl p-2.5 shadow-sm text-center">
+              <p className="text-xs text-gray-400">{item.label}</p>
+              <p className={`text-lg font-bold ${item.color}`}>{item.value}</p>
             </div>
+          ))}
+        </div>
 
-                    {/* ══ TAB: ส่งของ ══ */}
+        {/* ══ TAB: ส่งของ ══ */}
         {activeTab === 'delivery' && (
           <>
             {/* ✅ แจ้งเตือนค้างส่ง */}
-            {overdueDeliveries.length > 0 && (
+            {overdueCount > 0 && (
               <button
                 onClick={() => setFilterStatus('overdue')}
                 className="w-full bg-red-50 rounded-2xl p-3 text-left active:scale-[0.98] transition-transform">
-                <p className="text-sm font-bold text-red-600">⚠️ มีออเดอร์ค้างส่ง {overdueDeliveries.length} รายการ!</p>
+                <p className="text-sm font-bold text-red-600">⚠️ มีออเดอร์ค้างส่ง {overdueCount} รายการ!</p>
                 <p className="text-xs text-red-400 mt-0.5">กดเพื่อดูรายการค้างส่งทั้งหมดค่ะ</p>
               </button>
             )}
@@ -375,7 +401,7 @@ async function markAsPaid(orderId: string) {
               </div>
             )}
 
-            {/* ✅ Date Filter พร้อม dot บนวันที่มีออเดอร์ค้าง */}
+            {/* Date Filter */}
             {filterStatus !== 'overdue' && (
               <div className="bg-white rounded-2xl p-3 shadow-sm">
                 <label className="text-xs text-gray-400">วันที่ส่ง</label>
@@ -392,7 +418,6 @@ async function markAsPaid(orderId: string) {
                     วันนี้
                   </button>
                 </div>
-                {/* แสดงวันที่มีออเดอร์ค้าง */}
                 {datesWithOrders.filter(d => d.date < today && d.date !== '2099-12-31').length > 0 && (
                   <div className="mt-2 flex gap-1.5 flex-wrap">
                     <p className="text-xs text-red-400 w-full">⚠️ วันที่มีออเดอร์ค้างส่ง:</p>
@@ -517,48 +542,48 @@ async function markAsPaid(orderId: string) {
                 {reservations
                   .filter(r => r.deliveries?.[0]?.status !== 'delivered')
                   .map(r => {
-                  const delivery = r.deliveries?.[0]
-                  const isPacked = delivery?.status === 'packed'
-                  const hasSchedule = delivery && delivery.scheduled_date !== '2099-12-31'
-                  return (
-                    <div key={r.id}
-                      onClick={() => {
-                        setSelectedReservation(r)
-                        setReserveScheduledDate(hasSchedule ? delivery.scheduled_date : (deliveryRounds[0]?.delivery_date || ''))
-                        setReserveZoneId(delivery?.zone_id || '')
-                        setReserveBagCount(delivery?.bag_count || 1)
-                      }}
-                      className={`bg-white rounded-2xl p-4 shadow-sm cursor-pointer active:scale-[0.98] transition-transform border-l-4 ${isPacked && !hasSchedule ? 'border-orange-400' : hasSchedule ? 'border-teal-400' : 'border-purple-300'}`}>
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-gray-800">{r.customers?.name || 'ลูกค้าทั่วไป'}</p>
-                          {r.customers?.phone && <p className="text-xs text-gray-400 mt-0.5">📞 {r.customers.phone}</p>}
-                          {r.customers?.address && <p className="text-xs text-gray-400">🏠 {r.customers.address}</p>}
-                          <p className="text-xs text-gray-400 mt-1">
-                            {r.order_items.length} รายการ · {new Date(r.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
-                          </p>
-                        </div>
-                        <div className="text-right ml-2 flex-shrink-0">
-                          <p className="text-purple-500 font-bold">{r.total.toLocaleString()}฿</p>
-                          <p className={`text-xs mt-0.5 ${r.payment_status === 'paid' ? 'text-teal-500' : 'text-amber-500'}`}>
-                            {r.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
-                          </p>
-                          {isPacked && !hasSchedule && (
-                            <p className="text-xs text-orange-500 font-semibold mt-1">📦 แพ๊คแล้ว {delivery.bag_count} ถุง</p>
-                          )}
-                          {hasSchedule && (
-                            <p className="text-xs text-teal-500 font-semibold mt-1">
-                              📅 {new Date(delivery!.scheduled_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
+                    const delivery = r.deliveries?.[0]
+                    const isPacked = delivery?.status === 'packed'
+                    const hasSchedule = delivery && delivery.scheduled_date !== '2099-12-31'
+                    return (
+                      <div key={r.id}
+                        onClick={() => {
+                          setSelectedReservation(r)
+                          setReserveScheduledDate(hasSchedule ? delivery.scheduled_date : (deliveryRounds[0]?.delivery_date || ''))
+                          setReserveZoneId(delivery?.zone_id || '')
+                          setReserveBagCount(delivery?.bag_count || 1)
+                        }}
+                        className={`bg-white rounded-2xl p-4 shadow-sm cursor-pointer active:scale-[0.98] transition-transform border-l-4 ${isPacked && !hasSchedule ? 'border-orange-400' : hasSchedule ? 'border-teal-400' : 'border-purple-300'}`}>
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-gray-800">{r.customers?.name || 'ลูกค้าทั่วไป'}</p>
+                            {r.customers?.phone && <p className="text-xs text-gray-400 mt-0.5">📞 {r.customers.phone}</p>}
+                            {r.customers?.address && <p className="text-xs text-gray-400">🏠 {r.customers.address}</p>}
+                            <p className="text-xs text-gray-400 mt-1">
+                              {r.order_items.length} รายการ · {new Date(r.created_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
                             </p>
-                          )}
-                          {!delivery && (
-                            <p className="text-xs text-purple-400 mt-1">กดนัดส่ง →</p>
-                          )}
+                          </div>
+                          <div className="text-right ml-2 flex-shrink-0">
+                            <p className="text-purple-500 font-bold">{r.total.toLocaleString()}฿</p>
+                            <p className={`text-xs mt-0.5 ${r.payment_status === 'paid' ? 'text-teal-500' : 'text-amber-500'}`}>
+                              {r.payment_status === 'paid' ? '✅ จ่ายแล้ว' : '⏳ ค้างชำระ'}
+                            </p>
+                            {isPacked && !hasSchedule && (
+                              <p className="text-xs text-orange-500 font-semibold mt-1">📦 แพ๊คแล้ว {delivery.bag_count} ถุง</p>
+                            )}
+                            {hasSchedule && (
+                              <p className="text-xs text-teal-500 font-semibold mt-1">
+                                📅 {new Date(delivery!.scheduled_date + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })}
+                              </p>
+                            )}
+                            {!delivery && (
+                              <p className="text-xs text-purple-400 mt-1">กดนัดส่ง →</p>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
               </div>
             )}
           </>
@@ -690,7 +715,6 @@ async function markAsPaid(orderId: string) {
               {selectedReservation.customers?.address && <p className="text-sm text-gray-500">🏠 {selectedReservation.customers.address}</p>}
             </div>
 
-            {/* สถานะการเงิน */}
             <div className="bg-white rounded-2xl p-3 mb-3 shadow-sm">
               <div className="flex justify-between items-center mb-2">
                 <span className="text-xs font-bold text-gray-500">สถานะการเงิน</span>
@@ -706,7 +730,6 @@ async function markAsPaid(orderId: string) {
               )}
             </div>
 
-            {/* รายการสินค้า */}
             <div className="mb-3">
               <p className="font-bold text-sm text-gray-700 mb-2">รายการที่ฝากไว้</p>
               <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -723,7 +746,6 @@ async function markAsPaid(orderId: string) {
               </div>
             </div>
 
-            {/* โซน + จำนวนถุง */}
             <div className="grid grid-cols-2 gap-2 mb-3">
               <div>
                 <label className="text-xs text-gray-400">โซน</label>
@@ -740,7 +762,6 @@ async function markAsPaid(orderId: string) {
               </div>
             </div>
 
-            {/* เลือกวันส่ง */}
             <div className="bg-white rounded-2xl p-3 mb-3 shadow-sm">
               <label className="text-xs text-gray-400 font-bold mb-2 block">📅 เลือกวันส่ง (ถ้านัดแล้ว)</label>
               {deliveryRounds.length > 0 ? (
@@ -760,14 +781,12 @@ async function markAsPaid(orderId: string) {
               )}
             </div>
 
-            {/* ปุ่ม */}
             <div className="space-y-2">
               <button onClick={packReservation} disabled={savingReserve || reserveBagCount <= 0}
                 className="w-full bg-gradient-to-r from-orange-400 to-rose-400 text-white font-bold py-3.5 rounded-2xl disabled:opacity-50 active:scale-95 transition-transform">
                 {savingReserve ? 'กำลังบันทึก...' : '📦 บันทึกแพ๊คแล้ว (ยังไม่นัดส่ง)'}
               </button>
 
-              {/* ปุ่มรีเซ็ตวันส่ง — แสดงเฉพาะตอนที่มีวันส่งอยู่แล้ว */}
               {selectedReservation.deliveries?.[0] &&
                selectedReservation.deliveries[0].scheduled_date !== '2099-12-31' && (
                 <button onClick={resetDeliveryDate} disabled={savingReserve}
