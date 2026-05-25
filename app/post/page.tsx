@@ -52,6 +52,9 @@ export default function PostPage() {
   const [showPreview, setShowPreview] = useState(false)
   const [previewCopied, setPreviewCopied] = useState(false)
 
+  // ── ย่อ/ขยาย โพสหลัก ──
+  const [isPostExpanded, setIsPostExpanded] = useState(false)
+
   useEffect(() => { fetchData() }, [])
 
   async function fetchData() {
@@ -105,7 +108,6 @@ export default function PostPage() {
     return name
   }
 
-  // ── สรุปหัวกรุ๊ป (โพสหลัก) ──
   function getFeaturedLine(group: PostGroup): string {
     if (group.items.length === 0) return ''
     const price = group.items[0]?.product_price
@@ -140,18 +142,14 @@ export default function PostPage() {
   }
 
   function generateFullPostText(): string {
-    // โพสหลัก
     const featured = groups
       .filter(g => g.items.length > 0)
       .map(g => getFeaturedLine(g))
       .join('\n')
-
-    // รายละเอียดกรุ๊ป
     const details = groups
       .filter(g => g.items.length > 0)
       .map(g => generatePostText(g))
       .join('\n\n')
-
     return [featured, details].filter(Boolean).join('\n\n').trim()
   }
 
@@ -258,7 +256,6 @@ export default function PostPage() {
                   ยกเลิก
                 </button>
               </>
-
             ) : (
               <>
                 <button onClick={() => setSelectMode(true)}
@@ -280,43 +277,59 @@ export default function PostPage() {
                 </button>
               </>
             )}
-
           </div>
         </div>
       </div>
 
       <div className="px-4 pb-8 space-y-3 pt-2">
 
-        {/* ══ โพสหลัก (auto จากกรุ๊ป) ══ */}
+        {/* ══ โพสหลัก (ย่อ/ขยายได้) ══ */}
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-50">
+
+          {/* Header — คลิกเพื่อย่อ/ขยาย */}
+          <div
+            className="flex items-center justify-between px-4 py-3 cursor-pointer active:bg-gray-50 transition-colors"
+            onClick={() => setIsPostExpanded(prev => !prev)}
+          >
             <div>
               <p className="font-bold text-gray-800 text-sm">⭐ โพสหลัก</p>
               <p className="text-xs text-gray-400 mt-0.5">สรุปอัตโนมัติจากกรุ๊ปด้านล่าง</p>
             </div>
-
-            <button
-              onClick={() => {
-                const text = groups.filter(g => g.items.length > 0).map(g => getFeaturedLine(g)).join('\n')
-                navigator.clipboard.writeText(text)
-                setPreviewCopied(true)
-                setTimeout(() => setPreviewCopied(false), 2000)
-              }}
-              className={`text-xs px-3 py-2 rounded-xl font-semibold active:scale-95 transition-transform ${previewCopied ? 'bg-teal-500 text-white' : 'bg-gradient-to-r from-orange-400 to-rose-400 text-white'}`}
-            >
-              {previewCopied ? '✅ คัดลอกแล้ว!' : '📋 คัดลอก'}
-            </button>
-
+            <div className="flex items-center gap-2">
+              {/* ปุ่มคัดลอก — หยุด event ไม่ให้ toggle */}
+              <button
+                onClick={e => {
+                  e.stopPropagation()
+                  const text = groups.filter(g => g.items.length > 0).map(g => getFeaturedLine(g)).join('\n')
+                  navigator.clipboard.writeText(text)
+                  setPreviewCopied(true)
+                  setTimeout(() => setPreviewCopied(false), 2000)
+                }}
+                className={`text-xs px-3 py-2 rounded-xl font-semibold active:scale-95 transition-transform ${previewCopied ? 'bg-teal-500 text-white' : 'bg-gradient-to-r from-orange-400 to-rose-400 text-white'}`}
+              >
+                {previewCopied ? '✅ คัดลอกแล้ว!' : '📋 คัดลอก'}
+              </button>
+              {/* ไอคอนลูกศรบอกสถานะ */}
+              <span className="text-gray-400 text-xs w-4 text-center">
+                {isPostExpanded ? '▼' : '▶'}
+              </span>
+            </div>
           </div>
-          <div className="px-4 py-3 space-y-1.5">
-            {groups.filter(g => g.items.length > 0).length === 0 ? (
-              <p className="text-xs text-gray-400 text-center py-2">ยังไม่มีกรุ๊ปค่ะ</p>
-            ) : groups.filter(g => g.items.length > 0).map(group => (
-              <p key={group.id} className="text-sm text-gray-700 font-mono">
-                {getFeaturedLine(group)}
-              </p>
-            ))}
-          </div>
+
+          {/* Content — แสดงเมื่อขยาย */}
+          {isPostExpanded && (
+            <div className="px-4 pb-3 border-t border-gray-50 space-y-1.5 pt-3">
+              {groups.filter(g => g.items.length > 0).length === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-2">ยังไม่มีกรุ๊ปค่ะ</p>
+              ) : (
+                groups.filter(g => g.items.length > 0).map(group => (
+                  <p key={group.id} className="text-sm text-gray-700 font-mono">
+                    {getFeaturedLine(group)}
+                  </p>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         {/* ══ กรุ๊ปสินค้า ══ */}
@@ -336,7 +349,6 @@ export default function PostPage() {
                 <div key={group.id}
                   className={`bg-white rounded-2xl shadow-sm overflow-hidden ${selectMode && selectedGroupIds.includes(group.id) ? 'ring-2 ring-rose-300' : ''}`}>
 
-                  {/* Group Header */}
                   <div
                     onClick={() => {
                       if (selectMode) {
@@ -376,7 +388,6 @@ export default function PostPage() {
                     )}
                   </div>
 
-                  {/* Expanded */}
                   {isExpanded && !selectMode && (
                     <>
                       {group.items.length === 0 ? (
