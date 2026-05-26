@@ -15,9 +15,9 @@ type Receipt = {
   problem_note: string | null
   note: string | null
   payment_type: string | null
-  order_for: string | null        // 'self' | 'sister'
-  payment_method: string | null   // 'cod' | 'promptpay' | 'installment'
-  fee_payer: string | null        // 'self' | 'white'
+  order_for: string | null
+  payment_method: string | null
+  fee_payer: string | null
   platforms: { id: string; name: string } | null
   operators: { id: string; name: string } | null
   coupons: { id: string; name: string; discount_value: number } | null
@@ -32,8 +32,9 @@ type Receipt = {
 }
 
 type CodPayer = 'self' | 'white'
-
 type Product = { id: string; name: string; code: string; unit: string; image_url: string | null }
+
+const WHITE_CATEGORY_ID = '61f0acb2-54c7-4dc6-9d0d-c06a50a2522b'
 
 export default function ParcelsPage() {
   const router = useRouter()
@@ -62,11 +63,12 @@ export default function ParcelsPage() {
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().split('T')[0])
   const [pendingReceive, setPendingReceive] = useState<Receipt | null>(null)
   const [paymentType, setPaymentType] = useState<'prepaid' | 'installment'>('prepaid')
-  const [codPayer, setCodPayer] = useState<CodPayer>('self')   // ใครจ่าย COD
+  const [codPayer, setCodPayer] = useState<CodPayer>('self')
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState({
     order_name: '', order_date: '', platform_id: '', operator_id: '',
     coupon_id: '', service_fee_actual: 0, note: '', tracking_no: '',
+    fee_payer: 'self' as 'self' | 'white',
   })
   const [showEditItems, setShowEditItems] = useState(false)
   const [editItems, setEditItems] = useState<{ id: string; product_id: string; product_name: string; product_unit: string; product_image: string | null; quantity: number; original_price: number }[]>([])
@@ -165,20 +167,35 @@ export default function ParcelsPage() {
     return { totalFee, totalCOD, hasData: dayReceipts.length > 0 || receivedReceipts.length > 0 }
   }
 
+  // ── แก้ไข: calcSelectedDayDetail เพิ่ม fee_payer breakdown ──
   function calcSelectedDayDetail(dateStr: string) {
     const dayReceipts = receipts.filter(r => r.order_date?.startsWith(dateStr))
     const receivedReceipts = receipts.filter(r => r.received_at?.startsWith(dateStr))
-    const byOperator: { [key: string]: { name: string; byCoupon: { couponName: string; fee: number; count: number }[]; total: number } } = {}
+
+    const byOperator: {
+      [key: string]: {
+        name: string
+        byCoupon: { couponName: string; fee: number; count: number; feePayer: 'self' | 'white' }[]
+        total: number
+        totalSelf: number
+        totalWhite: number
+      }
+    } = {}
+
     dayReceipts.forEach(r => {
       const opId = r.operators?.id || 'unknown'
       const opName = r.operators?.name || 'ไม่ระบุ'
       const couponName = r.coupons?.name || 'ไม่ระบุคูปอง'
       const fee = r.service_fee_actual || 0
-      if (!byOperator[opId]) byOperator[opId] = { name: opName, byCoupon: [], total: 0 }
-      const existing = byOperator[opId].byCoupon.find(c => c.couponName === couponName && c.fee === fee)
-      if (existing) { existing.count++ } else { byOperator[opId].byCoupon.push({ couponName, fee, count: 1 }) }
+      const feePayer = (r.fee_payer as 'self' | 'white') || 'self'
+      if (!byOperator[opId]) byOperator[opId] = { name: opName, byCoupon: [], total: 0, totalSelf: 0, totalWhite: 0 }
+      const existing = byOperator[opId].byCoupon.find(c => c.couponName === couponName && c.fee === fee && c.feePayer === feePayer)
+      if (existing) { existing.count++ } else { byOperator[opId].byCoupon.push({ couponName, fee, count: 1, feePayer }) }
       byOperator[opId].total += fee
+      if (feePayer === 'white') byOperator[opId].totalWhite += fee
+      else byOperator[opId].totalSelf += fee
     })
+
     const byPlatform: { [key: string]: { name: string; total: number } } = {}
     receivedReceipts.forEach(r => {
       const platId = r.platforms?.id || 'unknown'
@@ -187,32 +204,54 @@ export default function ParcelsPage() {
       if (!byPlatform[platId]) byPlatform[platId] = { name: platName, total: 0 }
       byPlatform[platId].total += cod
     })
+
     return {
       operators: Object.values(byOperator),
       platforms: Object.values(byPlatform),
       grandFee: Object.values(byOperator).reduce((s, op) => s + op.total, 0),
+      grandFeeSelf: Object.values(byOperator).reduce((s, op) => s + op.totalSelf, 0),
+      grandFeeWhite: Object.values(byOperator).reduce((s, op) => s + op.totalWhite, 0),
       grandCOD: Object.values(byPlatform).reduce((s, p) => s + p.total, 0),
     }
   }
 
+  // ── แก้ไข: calcDailyData เพิ่ม fee_payer breakdown ──
   function calcDailyData() {
     const dateReceipts = receipts.filter(r => r.order_date?.startsWith(feeDate))
     const receivedOnDate = receipts.filter(r => r.received_at?.startsWith(feeDate))
-    const byOperator: { [key: string]: { id: string; name: string; byCoupon: { couponName: string; fee: number; count: number }[]; total: number } } = {}
+
+    const byOperator: {
+      [key: string]: {
+        id: string
+        name: string
+        byCoupon: { couponName: string; fee: number; count: number; feePayer: 'self' | 'white' }[]
+        total: number
+        totalSelf: number
+        totalWhite: number
+      }
+    } = {}
+
     dateReceipts.forEach(r => {
       const opId = r.operators?.id || 'unknown'
       const opName = r.operators?.name || 'ไม่ระบุคนกด'
       const couponName = r.coupons?.name || 'ไม่ระบุคูปอง'
       const fee = r.service_fee_actual || 0
-      if (!byOperator[opId]) byOperator[opId] = { id: opId, name: opName, byCoupon: [], total: 0 }
-      const existing = byOperator[opId].byCoupon.find(c => c.couponName === couponName && c.fee === fee)
-      if (existing) { existing.count++ } else { byOperator[opId].byCoupon.push({ couponName, fee, count: 1 }) }
+      const feePayer = (r.fee_payer as 'self' | 'white') || 'self'
+      if (!byOperator[opId]) byOperator[opId] = { id: opId, name: opName, byCoupon: [], total: 0, totalSelf: 0, totalWhite: 0 }
+      const existing = byOperator[opId].byCoupon.find(c => c.couponName === couponName && c.fee === fee && c.feePayer === feePayer)
+      if (existing) { existing.count++ } else { byOperator[opId].byCoupon.push({ couponName, fee, count: 1, feePayer }) }
       byOperator[opId].total += fee
+      if (feePayer === 'white') byOperator[opId].totalWhite += fee
+      else byOperator[opId].totalSelf += fee
     })
+
     const totalCODPaid = receivedOnDate.reduce((sum, r) => sum + (r.cod_actual ?? getCOD(r)), 0)
+    const allFees = Object.values(byOperator)
     return {
-      fees: Object.values(byOperator),
-      grandFeeTotal: Object.values(byOperator).reduce((s, op) => s + op.total, 0),
+      fees: allFees,
+      grandFeeTotal: allFees.reduce((s, op) => s + op.total, 0),
+      grandFeeSelf: allFees.reduce((s, op) => s + op.totalSelf, 0),
+      grandFeeWhite: allFees.reduce((s, op) => s + op.totalWhite, 0),
       receivedCount: receivedOnDate.length,
       totalCODPaid,
     }
@@ -228,6 +267,7 @@ export default function ParcelsPage() {
       service_fee_actual: receipt.service_fee_actual || 0,
       note: receipt.note || '',
       tracking_no: receipt.tracking_no || '',
+      fee_payer: (receipt.fee_payer as 'self' | 'white') || 'self',
     })
     setShowEdit(true)
   }
@@ -287,21 +327,70 @@ export default function ParcelsPage() {
     setShowSearchProduct(false); setSearchProduct('')
   }
 
+  // ── แก้ไขหลัก: handleSaveEdit สร้าง/ลบหนี้ไวท์ด้วยเมื่อ fee_payer เปลี่ยน ──
   async function handleSaveEdit() {
     if (!selected) return
     setSaving(true)
     try {
+      const oldFeePayer = selected.fee_payer || 'self'
+      const newFeePayer = editForm.fee_payer
+      const fee = editForm.service_fee_actual
+
       await supabase.from('stock_receipts').update({
         order_name: editForm.order_name || null,
         order_date: editForm.order_date,
         platform_id: editForm.platform_id || null,
         operator_id: editForm.operator_id || null,
         coupon_id: editForm.coupon_id || null,
-        service_fee_actual: editForm.service_fee_actual,
+        service_fee_actual: fee,
         note: editForm.note || null,
         tracking_no: editForm.tracking_no || null,
+        fee_payer: newFeePayer,
       }).eq('id', selected.id)
-      setShowEdit(false); setSelected(null); fetchData()
+
+      // ── จัดการหนี้ไวท์ (ค่ากด) ──
+      if (oldFeePayer !== newFeePayer && fee > 0) {
+        // ลบหนี้ค่ากดเดิมที่ผูกกับ receipt นี้ (ถ้ามี)
+        // ใช้ filter note เพราะเราเซฟ receipt_id ไว้ใน note ด้วย
+        const { data: existingFeeDebts } = await supabase
+          .from('debts')
+          .select('id, name')
+          .eq('receipt_id', selected.id)
+          .like('name', 'ค่ากด ·%')
+
+        if (existingFeeDebts && existingFeeDebts.length > 0) {
+          await supabase.from('debts').delete().in('id', existingFeeDebts.map(d => d.id))
+        }
+
+        // ถ้าเปลี่ยนเป็น "ไวท์จ่าย" → สร้างหนี้ใหม่
+        if (newFeePayer === 'white') {
+          const orderDateForLabel = editForm.order_date || selected.order_date
+          const dateLabel = new Date(orderDateForLabel).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+          await supabase.from('debts').insert({
+            name: `ค่ากด · ${editForm.order_name || selected.order_name || 'ไม่ระบุชื่อ'} · ${dateLabel}`,
+            amount: fee,
+            paid_amount: 0,
+            category: 'หนี้ไวท์',
+            debt_category_id: WHITE_CATEGORY_ID,
+            status: 'unpaid',
+            note: `receipt_id:${selected.id}`,
+            receipt_id: selected.id,
+            debtor: 'เรา',
+            creditor: 'ไวท์',
+            has_installments: false,
+          })
+        }
+        // ถ้าเปลี่ยนเป็น "เราจ่าย" → ลบหนี้ไปแล้วข้างบน ไม่ต้องสร้างใหม่
+      }
+
+      setShowEdit(false)
+      setSelected(null)
+      fetchData()
+      alert(newFeePayer === 'white' && oldFeePayer !== 'white'
+        ? 'บันทึกแล้วค่ะ! สร้างหนี้ "เราเป็นหนี้ไวท์" ให้อัตโนมัติแล้วค่ะ 💙'
+        : oldFeePayer === 'white' && newFeePayer !== 'white'
+        ? 'บันทึกแล้วค่ะ! ลบหนี้ค่ากดไวท์ออกให้แล้วค่ะ ✅'
+        : 'บันทึกเรียบร้อยค่ะ')
     } catch { alert('เกิดข้อผิดพลาดค่ะ') }
     setSaving(false)
   }
@@ -311,7 +400,7 @@ export default function ParcelsPage() {
     setActualCOD(getCOD(receipt))
     setReceivedDate(today)
     setPaymentType('prepaid')
-    setCodPayer('self')   // default = เราจ่าย
+    setCodPayer('self')
     setShowConfirmReceive(true)
   }
 
@@ -330,7 +419,6 @@ export default function ParcelsPage() {
         payment_type: finalPaymentType,
       }).eq('id', pendingReceive.id)
 
-      // เพิ่ม stock
       for (const item of pendingReceive.stock_receipt_items) {
         if (!item.products) continue
         const { data: product } = await supabase.from('products').select('stock_qty, avg_cost').eq('id', item.products.id).single()
@@ -346,7 +434,6 @@ export default function ParcelsPage() {
         }
       }
 
-      // บันทึกรายจ่ายอัตโนมัติ ถ้าสั่งเองและจ่ายแล้ว
       if (isSelf && paymentType === 'prepaid') {
         const totalCost = pendingReceive.stock_receipt_items.reduce((s, i) => s + i.original_price, 0)
         if (totalCost > 0) {
@@ -360,8 +447,6 @@ export default function ParcelsPage() {
         }
       }
 
-      // ─── สร้างหนี้ "เราเป็นหนี้ไวท์" ถ้าไวท์จ่าย COD ─── 
-      const WHITE_CATEGORY_ID = '61f0acb2-54c7-4dc6-9d0d-c06a50a2522b'
       if (!isSelf && codPayer === 'white' && finalCOD > 0) {
         const dateLabel = new Date(receivedDate).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
         await supabase.from('debts').insert({
@@ -420,7 +505,6 @@ export default function ParcelsPage() {
           }
         }
         await supabase.from('expenses').delete().eq('note', `รับพัสดุ: ${receipt.order_name || 'ไม่ระบุชื่อ'}`)
-        // ลบหนี้ที่สร้างจาก receipt นี้ด้วย
         await supabase.from('debts').delete().eq('receipt_id', receipt.id)
       }
       await supabase.from('stock_receipts').update({
@@ -502,22 +586,18 @@ export default function ParcelsPage() {
                   {operators.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                 </select>
               </div>
-
-              {/* filter ของใคร */}
               <div className="grid grid-cols-3 gap-2">
                 {([
                   { key: 'all', label: '🐱 ทั้งหมด' },
                   { key: 'self', label: '🐱 ของเรา' },
                   { key: 'sister', label: '👩 พี่สาว' },
                 ] as { key: 'all' | 'self' | 'sister'; label: string }[]).map(btn => (
-                  <button key={btn.key}
-                    onClick={() => setFilterOrderFor(btn.key)}
+                  <button key={btn.key} onClick={() => setFilterOrderFor(btn.key)}
                     className={`py-2 rounded-xl text-xs font-semibold transition-all ${filterOrderFor === btn.key ? 'bg-gradient-to-r from-purple-400 to-pink-400 text-white' : 'bg-gray-50 text-gray-500'}`}>
                     {btn.label}
                   </button>
                 ))}
               </div>
-
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-gray-400">📅 วันที่สั่ง</label>
@@ -616,8 +696,10 @@ export default function ParcelsPage() {
           </>
         )}
 
+        {/* ─── Tab: ค่ากด & COD ─── */}
         {activeTab === 'fees' && (
           <div>
+            {/* ── ปฏิทิน ── */}
             <div className="bg-white rounded-2xl p-3 shadow-sm mb-3">
               <div className="flex items-center justify-between mb-2">
                 <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))} className="text-gray-400 text-xl px-2">‹</button>
@@ -651,6 +733,7 @@ export default function ParcelsPage() {
               </div>
             </div>
 
+            {/* ── เลือกวันในปฏิทิน ── */}
             {selectedCalDate ? (() => {
               const d = calcSelectedDayDetail(selectedCalDate)
               const displayDate = new Date(selectedCalDate + 'T12:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: '2-digit' })
@@ -666,18 +749,54 @@ export default function ParcelsPage() {
                               <p className="font-medium text-gray-800 text-sm">👤 {op.name}</p>
                               <p className="text-xs text-gray-400">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</p>
                             </div>
+                            {/* ── แก้ไข: แสดง feePayer ในแต่ละแถว ── */}
                             {op.byCoupon.map((c, j) => (
                               <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
-                                <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
+                                <span>
+                                  {c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล
+                                  {c.feePayer === 'white'
+                                    ? <span className="text-sky-500 font-semibold"> · 💙ไวท์จ่าย</span>
+                                    : <span className="text-rose-400"> · 🐱เราจ่าย</span>}
+                                </span>
                                 <span>{(c.fee * c.count).toLocaleString()}฿</span>
                               </div>
                             ))}
-                            <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1"><span>รวม</span><span>{op.total.toLocaleString()}฿</span></div>
+                            <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1">
+                              <span>รวม</span>
+                              <span>{op.total.toLocaleString()}฿</span>
+                            </div>
+                            {/* ── แก้ไข: แสดง breakdown เราจ่าย vs ไวท์จ่าย ── */}
+                            {op.totalWhite > 0 && (
+                              <div className="mt-1 bg-sky-50 rounded-xl px-2 py-1.5 flex justify-between text-xs">
+                                <span className="text-sky-600">💙 ไวท์จ่าย</span>
+                                <span className="font-bold text-sky-600">{op.totalWhite.toLocaleString()}฿</span>
+                              </div>
+                            )}
+                            {op.totalSelf > 0 && op.totalWhite > 0 && (
+                              <div className="mt-1 bg-rose-50 rounded-xl px-2 py-1.5 flex justify-between text-xs">
+                                <span className="text-rose-500">🐱 เราจ่าย</span>
+                                <span className="font-bold text-rose-500">{op.totalSelf.toLocaleString()}฿</span>
+                              </div>
+                            )}
                           </div>
                         ))}
-                        <div className="bg-rose-50 rounded-2xl p-3 flex justify-between items-center">
-                          <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
-                          <span className="text-xl font-bold text-rose-600">{d.grandFee.toLocaleString()}฿</span>
+                        <div className="bg-rose-50 rounded-2xl p-3 space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
+                            <span className="text-xl font-bold text-rose-600">{d.grandFee.toLocaleString()}฿</span>
+                          </div>
+                          {d.grandFeeWhite > 0 && (
+                            <div className="flex justify-between text-xs pt-1 border-t border-rose-100">
+                              <span className="text-sky-600">💙 ไวท์จ่าย</span>
+                              <span className="font-bold text-sky-600">{d.grandFeeWhite.toLocaleString()}฿</span>
+                            </div>
+                          )}
+                          {d.grandFeeSelf > 0 && d.grandFeeWhite > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-rose-500">🐱 เราจ่าย</span>
+                              <span className="font-bold text-rose-500">{d.grandFeeSelf.toLocaleString()}฿</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -702,7 +821,8 @@ export default function ParcelsPage() {
                 </div>
               )
             })() : (() => {
-              const { fees, grandFeeTotal, receivedCount, totalCODPaid } = calcDailyData()
+              // ── ไม่ได้เลือกวัน → แสดงวันนี้ ──
+              const { fees, grandFeeTotal, grandFeeSelf, grandFeeWhite, receivedCount, totalCODPaid } = calcDailyData()
               const receivedOnDate = receipts.filter(r => r.received_at?.startsWith(feeDate))
               const byPlatform: { [key: string]: { name: string; total: number } } = {}
               receivedOnDate.forEach(r => {
@@ -724,18 +844,54 @@ export default function ParcelsPage() {
                               <p className="font-medium text-gray-800 text-sm">👤 {op.name}</p>
                               <p className="text-xs text-gray-400">{op.byCoupon.reduce((s, c) => s + c.count, 0)} บิล</p>
                             </div>
+                            {/* ── แก้ไข: แสดง feePayer ในแต่ละแถว ── */}
                             {op.byCoupon.map((c, j) => (
                               <div key={j} className="flex justify-between text-xs text-gray-500 mb-0.5">
-                                <span>{c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล</span>
+                                <span>
+                                  {c.couponName} (ค่ากด {c.fee}฿) × {c.count} บิล
+                                  {c.feePayer === 'white'
+                                    ? <span className="text-sky-500 font-semibold"> · 💙ไวท์จ่าย</span>
+                                    : <span className="text-rose-400"> · 🐱เราจ่าย</span>}
+                                </span>
                                 <span>{(c.fee * c.count).toLocaleString()}฿</span>
                               </div>
                             ))}
-                            <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1"><span>รวม</span><span>{op.total.toLocaleString()}฿</span></div>
+                            <div className="flex justify-between text-sm font-bold text-rose-500 pt-1 mt-1">
+                              <span>รวม</span>
+                              <span>{op.total.toLocaleString()}฿</span>
+                            </div>
+                            {/* ── แก้ไข: แสดง breakdown ── */}
+                            {op.totalWhite > 0 && (
+                              <div className="mt-1 bg-sky-50 rounded-xl px-2 py-1.5 flex justify-between text-xs">
+                                <span className="text-sky-600">💙 ไวท์จ่าย</span>
+                                <span className="font-bold text-sky-600">{op.totalWhite.toLocaleString()}฿</span>
+                              </div>
+                            )}
+                            {op.totalSelf > 0 && op.totalWhite > 0 && (
+                              <div className="mt-1 bg-rose-50 rounded-xl px-2 py-1.5 flex justify-between text-xs">
+                                <span className="text-rose-500">🐱 เราจ่าย</span>
+                                <span className="font-bold text-rose-500">{op.totalSelf.toLocaleString()}฿</span>
+                              </div>
+                            )}
                           </div>
                         ))}
-                        <div className="bg-rose-50 rounded-2xl p-3 flex justify-between items-center">
-                          <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
-                          <span className="text-xl font-bold text-rose-600">{grandFeeTotal.toLocaleString()}฿</span>
+                        <div className="bg-rose-50 rounded-2xl p-3 space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-bold text-rose-700">รวมค่ากดทั้งวัน</span>
+                            <span className="text-xl font-bold text-rose-600">{grandFeeTotal.toLocaleString()}฿</span>
+                          </div>
+                          {grandFeeWhite > 0 && (
+                            <div className="flex justify-between text-xs pt-1 border-t border-rose-100">
+                              <span className="text-sky-600">💙 ไวท์จ่าย</span>
+                              <span className="font-bold text-sky-600">{grandFeeWhite.toLocaleString()}฿</span>
+                            </div>
+                          )}
+                          {grandFeeSelf > 0 && grandFeeWhite > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-rose-500">🐱 เราจ่าย</span>
+                              <span className="font-bold text-rose-500">{grandFeeSelf.toLocaleString()}฿</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -772,14 +928,11 @@ export default function ParcelsPage() {
                 <h3 className="font-bold text-lg text-gray-800">รายละเอียดพัสดุ</h3>
                 <button onClick={() => setSelected(null)} className="text-gray-400 text-xl">✕</button>
               </div>
-
-              {/* badge ของใคร */}
               {selected.order_for === 'sister' && (
                 <div className="bg-purple-50 rounded-xl px-3 py-2 mb-3 text-xs text-purple-600 font-semibold">
                   👩 ออเดอร์ของพี่สาว
                 </div>
               )}
-
               <div className="bg-white rounded-2xl p-3 mb-3 space-y-1.5 shadow-sm">
                 {[
                   ['ชื่อที่สั่ง', selected.order_name || '-'],
@@ -799,7 +952,6 @@ export default function ParcelsPage() {
                   </div>
                 ))}
               </div>
-
               <div className="mb-3">
                 <p className="font-bold text-sm text-gray-700 mb-2">รายการสินค้า</p>
                 <div className="space-y-2">
@@ -820,15 +972,12 @@ export default function ParcelsPage() {
                   ))}
                 </div>
               </div>
-
               <div className="bg-rose-50 rounded-2xl p-3 mb-3 flex justify-between items-center">
                 <span className="font-bold text-rose-700">💰 ยอด COD ปลายทาง</span>
                 <span className="text-2xl font-bold text-rose-600">{getCOD(selected).toFixed(2)}฿</span>
               </div>
-
               {selected.note && <div className="bg-amber-50 rounded-2xl p-3 mb-3"><p className="text-xs text-amber-700 font-bold mb-1">หมายเหตุ</p><p className="text-sm">{selected.note}</p></div>}
               {selected.problem_note && <div className="bg-red-50 rounded-2xl p-3 mb-3"><p className="text-xs text-red-700 font-bold mb-1">⚠️ ปัญหาที่พบ</p><p className="text-sm">{selected.problem_note}</p></div>}
-
               <div className="space-y-2">
                 <div className="grid grid-cols-2 gap-2">
                   <button onClick={() => openEdit(selected)} className="bg-gradient-to-r from-orange-400 to-rose-400 text-white font-bold py-3 rounded-2xl text-sm active:scale-95">✏️ แก้ไขข้อมูล</button>
@@ -866,86 +1015,54 @@ export default function ParcelsPage() {
               {pendingReceive.order_for === 'sister' && (
                 <p className="text-xs text-purple-500 font-semibold mb-3">👩 ออเดอร์ของพี่สาว</p>
               )}
-
               <div className="bg-gray-50 rounded-2xl p-3 mb-3 text-sm space-y-1">
                 <div className="flex justify-between"><span className="text-gray-400">ราคาสินค้ารวม</span><span className="font-bold">{getCOD(pendingReceive).toFixed(2)}฿</span></div>
                 <div className="flex justify-between"><span className="text-gray-400">ค่ากด</span><span className="text-rose-500 font-bold">{pendingReceive.service_fee_actual?.toFixed(2) || '0'}฿</span></div>
               </div>
-
               <div className="mb-3">
                 <label className="text-xs text-gray-400">วันที่รับของจริง</label>
                 <input type="date" value={receivedDate} onChange={e => setReceivedDate(e.target.value)}
                   className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" />
               </div>
-
               {isSelfOrder(pendingReceive) ? (
-                /* สั่งเอง — เลือกจ่ายแล้วหรือผ่อน */
                 <div className="bg-blue-50 rounded-2xl p-3 mb-3">
                   <p className="text-xs text-blue-700 font-bold mb-2">🛒 สั่งเอง — ชำระแบบไหนคะ?</p>
                   <div className="grid grid-cols-2 gap-2">
                     <button onClick={() => setPaymentType('prepaid')}
-                      className={`py-2.5 rounded-xl text-sm font-bold transition-all ${paymentType === 'prepaid' ? 'bg-teal-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
-                      ✅ จ่ายแล้ว
-                    </button>
+                      className={`py-2.5 rounded-xl text-sm font-bold transition-all ${paymentType === 'prepaid' ? 'bg-teal-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>✅ จ่ายแล้ว</button>
                     <button onClick={() => setPaymentType('installment')}
-                      className={`py-2.5 rounded-xl text-sm font-bold transition-all ${paymentType === 'installment' ? 'bg-purple-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
-                      💳 ผ่อน
-                    </button>
+                      className={`py-2.5 rounded-xl text-sm font-bold transition-all ${paymentType === 'installment' ? 'bg-purple-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>💳 ผ่อน</button>
                   </div>
-                  {paymentType === 'prepaid' && (
-                    <p className="text-xs text-teal-600 mt-2">✅ จะบันทึกรายจ่าย {getCOD(pendingReceive).toFixed(2)}฿ ในการเงินให้อัตโนมัติค่ะ</p>
-                  )}
-                  {paymentType === 'installment' && (
-                    <p className="text-xs text-purple-600 mt-2">💳 บันทึกรับของแล้วค่ะ อย่าลืมไปเพิ่มหนี้สินด้วยนะคะ</p>
-                  )}
+                  {paymentType === 'prepaid' && <p className="text-xs text-teal-600 mt-2">✅ จะบันทึกรายจ่าย {getCOD(pendingReceive).toFixed(2)}฿ ในการเงินให้อัตโนมัติค่ะ</p>}
+                  {paymentType === 'installment' && <p className="text-xs text-purple-600 mt-2">💳 บันทึกรับของแล้วค่ะ อย่าลืมไปเพิ่มหนี้สินด้วยนะคะ</p>}
                 </div>
               ) : (
-                /* COD ปกติ — ระบุยอด + ใครจ่าย */
                 <>
                   <div className="mb-3">
                     <label className="text-xs text-gray-400">ยอด COD ที่จ่ายจริง (฿)</label>
                     <input type="number" step="0.01" value={actualCOD} onChange={e => setActualCOD(Number(e.target.value))}
                       className="w-full bg-gray-50 rounded-2xl px-4 py-2.5 text-sm outline-none mt-1" autoFocus />
                     <div className="flex gap-2 mt-1.5">
-                      <button onClick={() => setActualCOD(Math.ceil(getCOD(pendingReceive)))}
-                        className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ปัดขึ้น {Math.ceil(getCOD(pendingReceive))}฿</button>
-                      <button onClick={() => setActualCOD(getCOD(pendingReceive))}
-                        className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
+                      <button onClick={() => setActualCOD(Math.ceil(getCOD(pendingReceive)))} className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ปัดขึ้น {Math.ceil(getCOD(pendingReceive))}฿</button>
+                      <button onClick={() => setActualCOD(getCOD(pendingReceive))} className="flex-1 bg-gray-50 text-gray-500 py-1.5 rounded-xl text-xs">ตามระบบ {getCOD(pendingReceive).toFixed(2)}฿</button>
                     </div>
                   </div>
-
-                  {/* ─── ใครจ่าย COD ─── */}
                   <div className="bg-teal-50 rounded-2xl p-3 mb-3">
                     <p className="text-xs text-teal-700 font-bold mb-2">💰 ใครจ่าย COD {actualCOD.toFixed(2)}฿ คะ?</p>
                     <div className="grid grid-cols-2 gap-2">
                       <button onClick={() => setCodPayer('self')}
-                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${codPayer === 'self' ? 'bg-teal-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
-                        🐱 เราจ่าย
-                      </button>
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${codPayer === 'self' ? 'bg-teal-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>🐱 เราจ่าย</button>
                       <button onClick={() => setCodPayer('white')}
-                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${codPayer === 'white' ? 'bg-sky-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
-                        💙 ไวท์จ่าย
-                      </button>
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${codPayer === 'white' ? 'bg-sky-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>💙 ไวท์จ่าย</button>
                     </div>
-                    {codPayer === 'white' && (
-                      <p className="text-xs text-sky-600 mt-2 font-semibold">
-                        💙 จะสร้างหนี้ "เราเป็นหนี้ไวท์ {actualCOD.toFixed(2)}฿" อัตโนมัติค่ะ
-                      </p>
-                    )}
-                    {codPayer === 'self' && (
-                      <p className="text-xs text-teal-600 mt-2">✅ บันทึกตามปกติค่ะ</p>
-                    )}
+                    {codPayer === 'white' && <p className="text-xs text-sky-600 mt-2 font-semibold">💙 จะสร้างหนี้ "เราเป็นหนี้ไวท์ {actualCOD.toFixed(2)}฿" อัตโนมัติค่ะ</p>}
+                    {codPayer === 'self' && <p className="text-xs text-teal-600 mt-2">✅ บันทึกตามปกติค่ะ</p>}
                   </div>
                 </>
               )}
-
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => { setShowConfirmReceive(false); setPendingReceive(null) }}
-                  className="bg-gray-100 text-gray-500 py-3 rounded-2xl font-semibold text-sm">ยกเลิก</button>
-                <button onClick={doConfirmReceive} disabled={saving}
-                  className="bg-teal-500 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50">
-                  {saving ? 'กำลังบันทึก...' : 'ยืนยัน'}
-                </button>
+                <button onClick={() => { setShowConfirmReceive(false); setPendingReceive(null) }} className="bg-gray-100 text-gray-500 py-3 rounded-2xl font-semibold text-sm">ยกเลิก</button>
+                <button onClick={doConfirmReceive} disabled={saving} className="bg-teal-500 text-white py-3 rounded-2xl font-bold text-sm disabled:opacity-50">{saving ? 'กำลังบันทึก...' : 'ยืนยัน'}</button>
               </div>
             </div>
           </div>
@@ -1006,6 +1123,31 @@ export default function ParcelsPage() {
                       className="w-full bg-white rounded-2xl px-4 py-3 text-sm outline-none mt-1 shadow-sm" />
                   </div>
                 </div>
+                {editForm.service_fee_actual > 0 && (
+                  <div>
+                    <label className="text-xs text-gray-400">💵 ค่ากด {editForm.service_fee_actual}฿ — ใครจ่าย?</label>
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <button onClick={() => setEditForm({ ...editForm, fee_payer: 'self' })}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${editForm.fee_payer === 'self' ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
+                        🐱 เราจ่าย
+                      </button>
+                      <button onClick={() => setEditForm({ ...editForm, fee_payer: 'white' })}
+                        className={`py-2.5 rounded-xl text-sm font-bold transition-all ${editForm.fee_payer === 'white' ? 'bg-sky-500 text-white' : 'bg-white text-gray-500 shadow-sm'}`}>
+                        💙 ไวท์จ่าย
+                      </button>
+                    </div>
+                    {editForm.fee_payer === 'white' && (
+                      <p className="text-xs text-sky-600 mt-1.5 font-semibold">
+                        💙 ระบบจะสร้าง/อัพเดทหนี้ไวท์ให้อัตโนมัติเมื่อบันทึกค่ะ
+                      </p>
+                    )}
+                    {editForm.fee_payer === 'self' && selected.fee_payer === 'white' && (
+                      <p className="text-xs text-rose-500 mt-1.5 font-semibold">
+                        🐱 ระบบจะลบหนี้ค่ากดไวท์ออกให้อัตโนมัติเมื่อบันทึกค่ะ
+                      </p>
+                    )}
+                  </div>
+                )}
                 <div>
                   <label className="text-xs text-gray-400">หมายเหตุ</label>
                   <textarea value={editForm.note} onChange={e => setEditForm({ ...editForm, note: e.target.value })}
