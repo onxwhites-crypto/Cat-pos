@@ -291,9 +291,10 @@ export default function OrderPage() {
     }
 
     // 3) ผ่อน → สร้างหนี้แบบผ่อน + สร้าง installments
-    if (paymentMethod === 'installment') {
-      const label = INSTALLMENT_LABELS[installmentType]
-      const instCategoryId = installmentType === 'spaylater_white' ? WHITE_CATEGORY_ID : null
+        if (paymentMethod === 'installment') {
+          const label = INSTALLMENT_LABELS[installmentType]
+          const instCategoryId = installmentType === 'spaylater_white' ? '21b99f5d-3bc8-49ef-adc0-21f7d831d200' : null
+
       const { data: debt } = await supabase.from('debts').insert({
         name: `ผ่อน ${label} · ${orderName || 'ไม่ระบุชื่อ'}`,
         amount: totalCOD,
