@@ -293,7 +293,9 @@ export default function OrderPage() {
     // 3) ผ่อน → สร้างหนี้แบบผ่อน + สร้าง installments
         if (paymentMethod === 'installment') {
           const label = INSTALLMENT_LABELS[installmentType]
-          const instCategoryId = installmentType === 'spaylater_white' ? '21b99f5d-3bc8-49ef-adc0-21f7d831d200' : null
+          const instCategoryId = installmentType === 'spaylater_white' 
+        ? '21b99f5d-3bc8-49ef-adc0-21f7d831d200'  // SPaylater ไวท์
+        : '06e1dc2c-97e6-4586-9e4a-243f4e710870'   // Spaylater แคท
 
       const { data: debt } = await supabase.from('debts').insert({
         name: `ผ่อน ${label} · ${orderName || 'ไม่ระบุชื่อ'}`,
