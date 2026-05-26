@@ -124,6 +124,7 @@ export default function Dashboard() {
     { href: '/import',     emoji: '🔄', label: 'Import / Export', sub: 'สินค้า',       bg: 'from-slate-400 to-gray-500' },
     { href: '/settings',   emoji: '⚙️', label: 'ตั้งค่า',         sub: 'Settings',     bg: 'from-gray-400 to-slate-500' },
     { href: '/purchase', emoji: '🛍️', label: 'รายการสั่งซื้อ', sub: 'Purchase', bg: 'from-rose-400 to-pink-500' },
+    { href: '/personal', emoji: '📓', label: 'บันทึกการเงิน', sub: 'Personal', bg: 'from-violet-400 to-purple-500' },
   ]
 
   return (
