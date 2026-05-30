@@ -198,10 +198,12 @@ export default function FinancePage() {
     const capitalExpenses = expenses.filter(e => e.date === dateStr && e.stream === 'capital').reduce((s, e) => s + e.amount, 0)
     const profitExpenses = expenses.filter(e => e.date === dateStr && e.stream === 'profit').reduce((s, e) => s + e.amount, 0)
 
-    // รายจ่ายสายทุน = ต้นทุน + ค่ากด(เรา) + COD(เรา) + พร้อมเพย์ + อื่นๆ
-    const capitalOut = cost + totalFeeSelf + totalCODSelf + capitalExpenses
+    // ─── สายทุน ───
+    // เงินตั้งต้น = cost (เงินทุนที่ได้คืนจากการขายของวันนี้)
+    // เอาไปหมุนซื้อของ: ค่ากด(เรา) + COD(เรา) + รายจ่ายทุนอื่นๆ
+    const capitalOut = totalFeeSelf + totalCODSelf + capitalExpenses
+    const capitalBalance = cost - capitalOut
 
-    const capitalBalance = sales - capitalOut
     const profitBalance = grossProfit - profitExpenses
 
     return {
@@ -237,13 +239,17 @@ export default function FinancePage() {
     const capitalExp = expenses.filter(e => e.stream === 'capital').reduce((s, e) => s + e.amount, 0)
     const profitExp = expenses.filter(e => e.stream === 'profit').reduce((s, e) => s + e.amount, 0)
     const grossProfit = sales - cost
-    const capitalOut = cost + totalFeeSelf + totalCODSelf + capitalExp
+
+    // ─── สายทุน ───
+    // เงินตั้งต้น = cost (เงินทุนที่ได้คืนจากการขาย)
+    // หักค่ากด(เรา) + COD(เรา) + รายจ่ายทุนอื่นๆ ที่เอาไปหมุนซื้อของ
+    const capitalOut = totalFeeSelf + totalCODSelf + capitalExp
 
     return {
       sales, cost, totalFeeSelf, totalFeeWhite,
       totalCODSelf, totalCODWhite,
       capitalExp, profitExp, grossProfit,
-      capitalOut, capitalBalance: sales - capitalOut,
+      capitalOut, capitalBalance: cost - capitalOut,
       profitBalance: grossProfit - profitExp,
     }
   })()
@@ -540,22 +546,29 @@ export default function FinancePage() {
               {new Date(dailyDate + 'T00:00:00').toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </h3>
 
+            {/* ─── การ์ดหัว: ยอดขายรวม ─── */}
+            <div className="bg-gradient-to-r from-orange-400 to-rose-400 rounded-2xl p-4 shadow-sm text-center text-white">
+              <p className="text-xs font-medium opacity-90">
+                ขายได้วันที่ {new Date(dailyDate + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'numeric', year: '2-digit' })}
+              </p>
+              <p className="font-bold text-3xl mt-1">{daily.sales.toLocaleString()}฿</p>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               {/* สายทุน */}
               <div className="bg-blue-50 rounded-2xl p-3 shadow-sm">
                 <p className="text-xs font-bold text-blue-700 mb-3 text-center">🏦 สายทุน</p>
                 <div className="space-y-2 text-xs">
                   <div className="bg-white rounded-xl p-2">
-                    <p className="text-gray-400 mb-0.5">รายรับ</p>
-                    <p className="font-bold text-green-600 text-base">{daily.sales.toLocaleString()}฿</p>
+                    <p className="text-gray-400 mb-0.5">เงินทุนได้คืน</p>
+                    <p className="font-bold text-blue-600 text-base">{daily.cost.toFixed(0)}฿</p>
                   </div>
                   <div className="bg-white rounded-xl p-2 space-y-1">
                     <p className="text-gray-400 font-semibold">รายจ่าย (เราจ่าย)</p>
-                    {daily.cost > 0 && <div className="flex justify-between"><span className="text-gray-500">ต้นทุน</span><span className="text-red-400">{daily.cost.toFixed(0)}</span></div>}
                     {daily.totalFeeSelf > 0 && <div className="flex justify-between"><span className="text-gray-500">ค่ากด</span><span className="text-red-400">{daily.totalFeeSelf.toFixed(0)}</span></div>}
                     {daily.totalCODSelf > 0 && <div className="flex justify-between"><span className="text-gray-500">COD</span><span className="text-red-400">{daily.totalCODSelf.toFixed(0)}</span></div>}
                     {daily.capitalExpenses > 0 && <div className="flex justify-between"><span className="text-gray-500">อื่นๆ</span><span className="text-red-400">{daily.capitalExpenses.toFixed(0)}</span></div>}
-                    {daily.cost === 0 && daily.totalFeeSelf === 0 && daily.totalCODSelf === 0 && daily.capitalExpenses === 0 && <p className="text-gray-300 text-center py-1">-</p>}
+                    {daily.totalFeeSelf === 0 && daily.totalCODSelf === 0 && daily.capitalExpenses === 0 && <p className="text-gray-300 text-center py-1">-</p>}
                   </div>
                   <div className={`rounded-xl p-2 text-center ${daily.capitalBalance >= 0 ? 'bg-blue-100' : 'bg-red-50'}`}>
                     <p className="text-xs text-gray-500">คงเหลือ</p>
@@ -624,11 +637,11 @@ export default function FinancePage() {
     .filter(([p]) => p.toLowerCase().includes('shopee'))
     .reduce((s, [, q]) => {
       const avgCost = orders
-        .filter(o => o.order_date === dailyDate || o.created_at?.startsWith(dailyDate))
+        .filter(o => o.order_date?.substring(0, 10) === dailyDate)
         .flatMap(o => o.order_items)
         .reduce((sum, i) => sum + (i.products?.avg_cost || 0) * i.quantity, 0) /
         Math.max(1, orders
-          .filter(o => o.order_date === dailyDate || o.created_at?.startsWith(dailyDate))
+          .filter(o => o.order_date?.substring(0, 10) === dailyDate)
           .flatMap(o => o.order_items)
           .reduce((sum, i) => sum + i.quantity, 0))
       return s + q * avgCost
@@ -718,12 +731,17 @@ export default function FinancePage() {
               <button onClick={nextMonth} className="text-gray-500 text-xl px-2 active:scale-95">›</button>
             </div>
 
+            {/* การ์ดหัว: ยอดขายรวมเดือน */}
+            <div className="bg-gradient-to-r from-orange-400 to-rose-400 rounded-2xl p-4 shadow-sm text-center text-white">
+              <p className="text-xs font-medium opacity-90">ขายได้รวมเดือนนี้</p>
+              <p className="font-bold text-3xl mt-1">{monthlyCapital.sales.toLocaleString()}฿</p>
+            </div>
+
             {/* สายทุน */}
             <div className="bg-blue-50 rounded-2xl p-4 shadow-sm">
               <p className="font-bold text-blue-700 mb-3">🏦 สายทุน</p>
               <div className="space-y-1.5 text-sm">
-                <div className="flex justify-between"><span className="text-gray-500">ยอดขายรวม</span><span className="font-bold text-green-600">+{monthlyCapital.sales.toLocaleString()}฿</span></div>
-                <div className="flex justify-between"><span className="text-gray-500">ต้นทุนสินค้า</span><span className="text-red-400">-{monthlyCapital.cost.toFixed(2)}฿</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">เงินทุนได้คืน</span><span className="font-bold text-blue-600">{monthlyCapital.cost.toFixed(2)}฿</span></div>
                 {monthlyCapital.totalFeeSelf > 0 && <div className="flex justify-between"><span className="text-gray-500">ค่ากด (เราจ่าย)</span><span className="text-red-400">-{monthlyCapital.totalFeeSelf.toFixed(2)}฿</span></div>}
                 {monthlyCapital.totalCODSelf > 0 && <div className="flex justify-between"><span className="text-gray-500">COD (เราจ่าย)</span><span className="text-red-400">-{monthlyCapital.totalCODSelf.toFixed(2)}฿</span></div>}
                 {monthlyCapital.capitalExp > 0 && <div className="flex justify-between"><span className="text-gray-500">รายจ่ายทุนอื่นๆ</span><span className="text-red-400">-{monthlyCapital.capitalExp.toFixed(2)}฿</span></div>}
