@@ -359,7 +359,7 @@ function PosPageInner() {
       if (orderType === 'normal') {
         await supabase.from('deliveries').insert({
           order_id: order.id, zone_id: zoneId || null,
-          scheduled_date: scheduledDate, bag_count: bagCount,
+          scheduled_date: scheduledDate === 'custom' ? customScheduledDate : scheduledDate, bag_count: bagCount,
           status: 'pending', note: deliveryAddress || null
         })
       }

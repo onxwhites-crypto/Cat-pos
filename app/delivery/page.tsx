@@ -764,17 +764,18 @@ export default function DeliveryPage() {
 
             <div className="bg-white rounded-2xl p-3 mb-3 shadow-sm">
               <label className="text-xs text-gray-400 font-bold mb-2 block">📅 เลือกวันส่ง (ถ้านัดแล้ว)</label>
-              {deliveryRounds.length > 0 ? (
-                <select value={reserveScheduledDate} onChange={e => setReserveScheduledDate(e.target.value)}
-                  className="w-full bg-gray-50 rounded-xl px-3 py-2.5 text-sm outline-none">
-                  <option value="">-- ยังไม่นัดส่ง --</option>
-                  {deliveryRounds.map(r => (
-                    <option key={r.id} value={r.delivery_date}>
-                      🛵 {new Date(r.delivery_date + 'T00:00:00').toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' })}
-                      {r.note ? ` — ${r.note}` : ''}
-                    </option>
-                  ))}
-                </select>
+            {deliveryRounds.length > 0 ? (
+              <select value={reserveScheduledDate} onChange={e => setReserveScheduledDate(e.target.value)}
+                className="w-full bg-gray-50 rounded-xl px-3 py-2.5 text-sm outline-none">
+                <option value="">-- ยังไม่นัดส่ง --</option>
+                <option value={today}>🚀 วันนี้ ({new Date(today + 'T00:00:00').toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })})</option>
+                {deliveryRounds.map(r => (
+                  <option key={r.id} value={r.delivery_date}>
+                    🛵 {new Date(r.delivery_date + 'T00:00:00').toLocaleDateString('th-TH', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    {r.note ? ` — ${r.note}` : ''}
+                  </option>
+                ))}
+              </select>
               ) : (
                 <input type="date" value={reserveScheduledDate} onChange={e => setReserveScheduledDate(e.target.value)}
                   className="w-full bg-gray-50 rounded-xl px-3 py-2.5 text-sm outline-none" />
