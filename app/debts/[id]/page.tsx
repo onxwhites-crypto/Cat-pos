@@ -70,6 +70,11 @@ export default function DebtCategoryPage() {
   const [saving, setSaving] = useState(false)
   const [confirmDialog, setConfirmDialog] = useState<{show:boolean;message:string;onConfirm:()=>void}>({show:false,message:'',onConfirm:()=>{}})
 
+  // ─── state สำหรับเมนู ☰ และโหมดเลือกจ่าย ───
+  const [showMenu, setShowMenu] = useState(false)
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+
   function showConfirmModal(message: string, onConfirm: () => void) {
     setConfirmDialog({ show: true, message, onConfirm })
   }
@@ -172,6 +177,25 @@ export default function DebtCategoryPage() {
     setSelectedDebt(null); fetchData(); setSaving(false)
   }
 
+  // ─── จ่ายหลายรายการพร้อมกัน ───
+  async function markManyPaid(ids: string[]) {
+    if (ids.length === 0) return
+    setSaving(true)
+    // อัปเดต paid_amount ให้เท่ากับ amount ของแต่ละรายการ + status = paid
+    for (const debtId of ids) {
+      const debt = debts.find(d => d.id === debtId)
+      if (debt) {
+        await supabase.from('debts').update({ paid_amount: debt.amount, status: 'paid' }).eq('id', debtId)
+      }
+    }
+    setSelectMode(false); setSelectedIds([]); setShowMenu(false)
+    fetchData(); setSaving(false)
+  }
+
+  function toggleSelectId(debtId: string) {
+    setSelectedIds(prev => prev.includes(debtId) ? prev.filter(x => x !== debtId) : [...prev, debtId])
+  }
+
   async function toggleInstallmentPaid(inst: Installment) {
     setSaving(true)
     const newPaid = !inst.paid
@@ -217,6 +241,11 @@ export default function DebtCategoryPage() {
   const thisMonthInsts = debts.map(d => getCurrentMonthInstallment(d)).filter(Boolean)
   const allPaid = thisMonthInsts.length > 0 && thisMonthInsts.every(i => i?.paid)
 
+  // ยอดรวมของรายการที่เลือกในโหมดเลือกจ่าย
+  const selectedTotal = pendingDebts
+    .filter(d => selectedIds.includes(d.id))
+    .reduce((s, d) => s + getRemaining(d), 0)
+
   function buildDailySummary() {
     const byDate: { [date: string]: { fee: number; cod: number; count: number } } = {}
     debts.forEach(debt => {
@@ -237,7 +266,15 @@ export default function DebtCategoryPage() {
 
         <div className="flex items-center gap-3 mb-4">
           <button onClick={() => router.push('/debts')} className="text-gray-500">← กลับ</button>
-          <h1 className="text-xl font-bold text-gray-800">{emoji} {category?.name}</h1>
+          <h1 className="text-xl font-bold text-gray-800 flex-1">{emoji} {category?.name}</h1>
+          {isSpecial && pendingDebts.length > 0 && !selectMode && (
+            <button onClick={() => setShowMenu(true)}
+              className="w-9 h-9 rounded-xl bg-white shadow-sm flex items-center justify-center text-gray-600 text-lg active:scale-95 transition-transform">☰</button>
+          )}
+          {selectMode && (
+            <button onClick={() => { setSelectMode(false); setSelectedIds([]) }}
+              className="text-sm text-gray-500 px-2 active:scale-95">ยกเลิก</button>
+          )}
         </div>
 
         {loading ? (
@@ -286,18 +323,36 @@ export default function DebtCategoryPage() {
             {/* รายการค้างอยู่ */}
             {pendingDebts.length > 0 && (
               <div className="bg-white rounded-2xl shadow-sm mb-3 overflow-hidden">
-                <div className="px-4 py-3 border-b border-gray-100">
+                <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
                   <h3 className={`font-bold text-sm ${isSister ? 'text-purple-700' : 'text-sky-700'}`}>
                     ⏳ ยังค้างอยู่ ({pendingDebts.length} รายการ)
                   </h3>
+                  {selectMode && (
+                    <button
+                      onClick={() => {
+                        const allIds = pendingDebts.map(d => d.id)
+                        const allSelected = allIds.every(x => selectedIds.includes(x))
+                        setSelectedIds(allSelected ? [] : allIds)
+                      }}
+                      className="text-xs text-sky-600 font-semibold active:scale-95">
+                      {pendingDebts.every(d => selectedIds.includes(d.id)) ? 'ยกเลิกทั้งหมด' : 'เลือกทั้งหมด'}
+                    </button>
+                  )}
                 </div>
                 {pendingDebts.map((debt, index) => {
                   const fee = debt.receipt?.service_fee_actual || 0
                   const cod = debt.receipt ? (debt.receipt.cod_actual ?? getCODFromReceipt(debt.receipt)) : debt.amount
+                  const isChecked = selectedIds.includes(debt.id)
                   return (
-                    <button key={debt.id} onClick={() => setSelectedDebt(debt)}
-                      className={`w-full text-left px-4 py-3 active:bg-gray-50 ${index < pendingDebts.length - 1 ? 'border-b border-gray-100' : ''}`}>
+                    <div key={debt.id}
+                      onClick={() => selectMode ? toggleSelectId(debt.id) : setSelectedDebt(debt)}
+                      className={`w-full text-left px-4 py-3 active:bg-gray-50 cursor-pointer ${index < pendingDebts.length - 1 ? 'border-b border-gray-100' : ''} ${selectMode && isChecked ? 'bg-sky-50' : ''}`}>
                       <div className="flex justify-between items-start">
+                        {selectMode && (
+                          <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center mr-3 flex-shrink-0 mt-0.5 ${isChecked ? 'bg-sky-500 border-sky-500 text-white' : 'border-gray-300'}`}>
+                            {isChecked ? '✓' : ''}
+                          </div>
+                        )}
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-800 truncate">{debt.name}</div>
                           <div className="text-xs text-gray-400 mt-0.5">
@@ -314,10 +369,10 @@ export default function DebtCategoryPage() {
                           <span className={`font-bold text-sm ${isSister ? 'text-purple-600' : 'text-sky-600'}`}>
                             {getRemaining(debt).toFixed(2)}฿
                           </span>
-                          <span className="text-gray-400 text-xs">›</span>
+                          {!selectMode && <span className="text-gray-400 text-xs">›</span>}
                         </div>
                       </div>
-                    </button>
+                    </div>
                   )
                 })}
               </div>
@@ -415,6 +470,52 @@ export default function DebtCategoryPage() {
               </div>
             )}
           </>
+        )}
+
+        {/* ── เมนู ☰ (bottom sheet) ── */}
+        {showMenu && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-end" onClick={() => setShowMenu(false)}>
+            <div className="bg-white w-full rounded-t-3xl p-4" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-center pt-1 pb-3"><div className="w-10 h-1 bg-gray-300 rounded-full" /></div>
+              <h3 className="font-bold text-gray-800 text-center mb-4">จัดการการจ่าย</h3>
+              <button
+                onClick={() => showConfirmModal(
+                  `${isSister ? 'รับเงิน' : 'จ่ายคืน'}ทั้งหมด ${pendingDebts.length} รายการ\nรวม ${totalRemaining.toFixed(2)}฿?`,
+                  () => markManyPaid(pendingDebts.map(d => d.id))
+                )}
+                className={`w-full text-white font-bold py-3.5 rounded-2xl mb-2 active:scale-95 transition-transform ${isSister ? 'bg-gradient-to-r from-purple-400 to-pink-400' : 'bg-gradient-to-r from-sky-400 to-blue-400'}`}>
+                ✅ {isSister ? 'รับเงิน' : 'จ่าย'}ทั้งหมด ({totalRemaining.toFixed(2)}฿)
+              </button>
+              <button
+                onClick={() => { setSelectMode(true); setSelectedIds([]); setShowMenu(false) }}
+                className={`w-full bg-white border-2 font-bold py-3.5 rounded-2xl active:scale-95 transition-transform ${isSister ? 'border-purple-300 text-purple-600' : 'border-sky-300 text-sky-600'}`}>
+                ☑️ เลือก{isSister ? 'รับ' : 'จ่าย'}เป็นรายการ
+              </button>
+              <button onClick={() => setShowMenu(false)}
+                className="w-full text-gray-400 font-semibold py-3 mt-1 active:scale-95">ยกเลิก</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── แถบล่างตอนเลือกจ่าย ── */}
+        {selectMode && (
+          <div className="fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-gray-200 px-4 py-3 shadow-lg">
+            <div className="max-w-md mx-auto flex items-center gap-3">
+              <div className="flex-1">
+                <div className="text-xs text-gray-400">เลือก {selectedIds.length} รายการ</div>
+                <div className={`font-bold ${isSister ? 'text-purple-600' : 'text-sky-600'}`}>{selectedTotal.toFixed(2)}฿</div>
+              </div>
+              <button
+                onClick={() => showConfirmModal(
+                  `${isSister ? 'รับเงิน' : 'จ่าย'} ${selectedIds.length} รายการ\nรวม ${selectedTotal.toFixed(2)}฿?`,
+                  () => markManyPaid(selectedIds)
+                )}
+                disabled={selectedIds.length === 0 || saving}
+                className={`text-white font-bold px-6 py-3 rounded-2xl disabled:opacity-40 active:scale-95 transition-transform ${isSister ? 'bg-gradient-to-r from-purple-400 to-pink-400' : 'bg-gradient-to-r from-sky-400 to-blue-400'}`}>
+                {saving ? 'กำลังบันทึก...' : `${isSister ? 'รับ' : 'จ่าย'}ที่เลือก`}
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Detail Popup */}

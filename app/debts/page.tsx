@@ -187,13 +187,15 @@ export default function DebtsPage() {
   const sisterDebts = debts.filter(d => d.debt_category_id === SISTER_CATEGORY_ID)
   const whiteDebts = debts.filter(d => d.debt_category_id === WHITE_CATEGORY_ID)
 
-  const sisterTotal = sisterDebts.reduce((s, d) => s + d.amount, 0)
-  const sisterPaid = sisterDebts.reduce((s, d) => s + getPaidAmount(d), 0)
-  const sisterRemaining = sisterTotal - sisterPaid
+    const sisterTotal = sisterDebts.reduce((s, d) => s + d.amount, 0)
+    const sisterPaid = sisterDebts.reduce((s, d) => s + getPaidAmount(d), 0)
+    const sisterRemaining = sisterTotal - sisterPaid
+    const sisterPendingCount = sisterDebts.filter(d => getRemaining(d) > 0).length
 
-  const whiteTotal = whiteDebts.reduce((s, d) => s + d.amount, 0)
-  const whitePaid = whiteDebts.reduce((s, d) => s + getPaidAmount(d), 0)
-  const whiteRemaining = whiteTotal - whitePaid
+    const whiteTotal = whiteDebts.reduce((s, d) => s + d.amount, 0)
+    const whitePaid = whiteDebts.reduce((s, d) => s + getPaidAmount(d), 0)
+    const whiteRemaining = whiteTotal - whitePaid
+    const whitePendingCount = whiteDebts.filter(d => getRemaining(d) > 0).length
 
   // category ปกติ (ไม่รวม พี่สาว / หนี้ไวท์)
   const specialCategoryIds = [SISTER_CATEGORY_ID, WHITE_CATEGORY_ID]
@@ -260,7 +262,7 @@ export default function DebtsPage() {
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <div className="font-bold text-purple-800 text-base">💜 พี่สาวเป็นหนี้เรา</div>
-                    <div className="text-xs text-purple-500 mt-0.5">{sisterDebts.length} ออเดอร์</div>
+                    <div className="text-xs text-purple-500 mt-0.5">ค้าง {sisterPendingCount} ออเดอร์</div>
                   </div>
                   <span className={`text-xs font-bold px-2 py-1 rounded-full ${sisterRemaining <= 0 ? 'bg-green-100 text-green-600' : 'bg-purple-100 text-purple-600'}`}>
                     {sisterRemaining <= 0 ? '✅ หมดแล้ว' : '⏳ ค้างอยู่'}
@@ -291,7 +293,7 @@ export default function DebtsPage() {
                 <div className="flex justify-between items-start mb-3">
                   <div>
                     <div className="font-bold text-sky-800 text-base">💙 เราเป็นหนี้ไวท์</div>
-                    <div className="text-xs text-sky-500 mt-0.5">{whiteDebts.length} รายการ</div>
+                    <div className="text-xs text-sky-500 mt-0.5">ค้าง {whitePendingCount} รายการ</div>
                   </div>
                   <span className={`text-xs font-bold px-2 py-1 rounded-full ${whiteRemaining <= 0 ? 'bg-green-100 text-green-600' : 'bg-sky-100 text-sky-600'}`}>
                     {whiteRemaining <= 0 ? '✅ คืนหมดแล้ว' : '⏳ ค้างอยู่'}
