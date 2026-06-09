@@ -30,6 +30,62 @@ export default function StockPage() {
   const [showAddProduct, setShowAddProduct] = useState(false)
   const [saving, setSaving] = useState(false)
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
+
+  // ── Stock Count ──
+  const [showStockCount, setShowStockCount] = useState(false)
+  const [countCategory, setCountCategory] = useState('')
+  const [countSearch, setCountSearch] = useState('')
+  const [countValues, setCountValues] = useState<Record<string, string>>({})
+  const [savingCount, setSavingCount] = useState(false)
+
+  function openStockCount() {
+    setCountValues({})
+    setCountCategory('')
+    setCountSearch('')
+    setShowStockCount(true)
+  }
+
+  const countProducts = products
+    .filter(p => {
+      const matchCat = !countCategory || p.category_id === countCategory
+      const matchSearch = !countSearch ||
+        p.name.toLowerCase().includes(countSearch.toLowerCase()) ||
+        p.code?.toLowerCase().includes(countSearch.toLowerCase())
+      return matchCat && matchSearch
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'th'))
+
+  async function handleSaveCount() {
+    const diffs = countProducts.filter(p => {
+      const val = countValues[p.id]
+      return val !== undefined && val !== '' && Number(val) !== p.stock_qty
+    })
+    if (diffs.length === 0) {
+      setShowStockCount(false)
+      return
+    }
+    setSavingCount(true)
+    try {
+      for (const p of diffs) {
+        const actual = Number(countValues[p.id])
+        const diff = actual - p.stock_qty
+        await supabase.from('stock_movements').insert({
+          product_id: p.id,
+          type: 'ADJUST',
+          quantity: diff,
+          unit_cost: p.avg_cost,
+          ref_type: 'stock_count',
+          note: `เช็คสต๊อก: นับได้ ${actual} (ในระบบ ${p.stock_qty})`,
+        })
+        await supabase.from('products').update({ stock_qty: actual }).eq('id', p.id)
+      }
+      setShowStockCount(false)
+      fetchData()
+    } catch (e) {
+      alert('เกิดข้อผิดพลาดค่ะ')
+    }
+    setSavingCount(false)
+  }
   const barcodeScannerRef = useRef<any>(null)
 
   const [form, setForm] = useState({
@@ -172,10 +228,16 @@ export default function StockPage() {
             </button>
             <h1 className="text-lg font-bold text-gray-800">📦 คลังสินค้า</h1>
           </div>
-          <button onClick={() => setShowAddProduct(true)}
-            className="bg-gradient-to-r from-orange-400 to-rose-400 text-white text-xs px-4 py-2.5 rounded-xl font-semibold shadow-sm active:scale-95 transition-transform">
-            + เพิ่มสินค้า
-          </button>
+          <div className="flex gap-2">
+            <button onClick={openStockCount}
+              className="bg-white text-orange-400 border border-orange-200 text-xs px-3 py-2.5 rounded-xl font-semibold shadow-sm active:scale-95 transition-transform">
+              🔢 เช็คสต๊อก
+            </button>
+            <button onClick={() => setShowAddProduct(true)}
+              className="bg-gradient-to-r from-orange-400 to-rose-400 text-white text-xs px-4 py-2.5 rounded-xl font-semibold shadow-sm active:scale-95 transition-transform">
+              + เพิ่มสินค้า
+            </button>
+          </div>
         </div>
 
         {/* Search */}
@@ -409,6 +471,111 @@ export default function StockPage() {
                 <p className="p-4 text-center text-white/50 text-sm">ส่องกล้องไปที่บาร์โค้ดสินค้าค่ะ</p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ══ STOCK COUNT MODAL ══ */}
+      {showStockCount && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-end">
+          <div className="bg-[#fff5f3] w-full rounded-t-3xl max-h-[92vh] flex flex-col">
+            <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            </div>
+            <div className="flex justify-between items-center px-4 py-2 flex-shrink-0">
+              <div>
+                <h3 className="font-bold text-lg text-gray-800">🔢 เช็คสต๊อก</h3>
+                <p className="text-xs text-gray-400">กรอกจำนวนที่นับได้จริงค่ะ</p>
+              </div>
+              <button onClick={() => setShowStockCount(false)} className="text-gray-400 text-xl">✕</button>
+            </div>
+            <div className="flex gap-2 overflow-x-auto px-4 pb-2 scrollbar-hide flex-shrink-0">
+              <button onClick={() => setCountCategory('')}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-all ${
+                  !countCategory ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-white text-gray-400'
+                }`}>
+                ทั้งหมด
+              </button>
+              {categories.map(c => (
+                <button key={c.id} onClick={() => setCountCategory(c.id)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 transition-all ${
+                    countCategory === c.id ? 'bg-gradient-to-r from-orange-400 to-rose-400 text-white' : 'bg-white text-gray-400'
+                  }`}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+            <div className="relative px-4 pb-2 flex-shrink-0">
+              <span className="absolute left-7 top-1/2 -translate-y-[60%] text-gray-300 text-sm pointer-events-none">🔍</span>
+              <input
+                value={countSearch}
+                onChange={e => setCountSearch(e.target.value)}
+                className="w-full bg-white rounded-2xl pl-8 pr-4 py-2.5 text-sm shadow-sm outline-none placeholder-gray-300"
+                placeholder="ค้นหาสินค้า หรือ รหัส..."
+              />
+            </div>
+            {(() => {
+              const filled = countProducts.filter(p => countValues[p.id] !== undefined && countValues[p.id] !== '')
+              const diffCount = filled.filter(p => Number(countValues[p.id]) !== p.stock_qty).length
+              return filled.length > 0 ? (
+                <div className="mx-4 mb-2 bg-orange-50 rounded-2xl px-4 py-2 flex justify-between items-center flex-shrink-0">
+                  <span className="text-xs text-gray-500">กรอกแล้ว <span className="font-bold text-orange-500">{filled.length}</span> รายการ</span>
+                  {diffCount > 0
+                    ? <span className="text-xs text-red-500 font-bold">⚠️ ต่างกัน {diffCount} รายการ</span>
+                    : <span className="text-xs text-green-500 font-bold">✅ ตรงทั้งหมด</span>
+                  }
+                </div>
+              ) : null
+            })()}
+            <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+              {countProducts.map(p => {
+                const val = countValues[p.id] ?? ''
+                const actual = val !== '' ? Number(val) : null
+                const diff = actual !== null ? actual - p.stock_qty : null
+                const diffColor = diff === null ? '' : diff > 0 ? 'text-green-500' : diff < 0 ? 'text-red-500' : 'text-gray-400'
+                const diffText = diff === null ? '' : diff > 0 ? `+${diff}` : `${diff}`
+                const borderColor = diff === null ? 'border-transparent' : diff !== 0 ? 'border-orange-300' : 'border-green-300'
+                return (
+                  <div key={p.id} className={`bg-white rounded-2xl px-3 py-2.5 flex items-center gap-3 border-2 ${borderColor} transition-all`}>
+                    <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {p.image_url
+                        ? <img src={p.image_url} alt={p.name} className="w-full h-full object-contain p-0.5" />
+                        : <span className="text-lg">🐱</span>
+                      }
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-gray-800 line-clamp-1">{p.name}</p>
+                      <p className="text-xs text-gray-400">ในระบบ: <span className="font-bold text-gray-600">{p.stock_qty}</span> {p.unit}</p>
+                    </div>
+                    <div className="w-10 text-center flex-shrink-0">
+                      {diff !== null && diff !== 0 && <span className={`text-xs font-bold ${diffColor}`}>{diffText}</span>}
+                      {diff === 0 && <span className="text-xs text-green-400">✓</span>}
+                    </div>
+                    <input
+                      type="number"
+                      value={val}
+                      onChange={e => setCountValues(prev => ({ ...prev, [p.id]: e.target.value }))}
+                      className="w-16 bg-[#fff5f3] border border-rose-100 rounded-xl px-2 py-1.5 text-sm text-center outline-none focus:border-orange-400 flex-shrink-0"
+                      placeholder={`${p.stock_qty}`}
+                      min="0"
+                    />
+                  </div>
+                )
+              })}
+            </div>
+            <div className="px-4 pb-6 pt-2 flex-shrink-0">
+              {(() => {
+                const diffCount = countProducts.filter(p =>
+                  countValues[p.id] !== undefined && countValues[p.id] !== '' && Number(countValues[p.id]) !== p.stock_qty
+                ).length
+                return (
+                  <button onClick={handleSaveCount} disabled={savingCount}
+                    className="w-full bg-gradient-to-r from-orange-400 to-rose-500 text-white font-bold py-4 rounded-2xl disabled:opacity-50 active:scale-[0.98] transition-transform">
+                    {savingCount ? 'กำลังบันทึก...' : diffCount > 0 ? `✅ ปรับยอด ${diffCount} รายการ` : '✅ ยืนยัน (ยอดตรงทั้งหมด)'}
+                  </button>
+                )
+              })()}
+            </div>
           </div>
         </div>
       )}
