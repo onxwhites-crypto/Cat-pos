@@ -27,6 +27,7 @@ type PostGroup = {
   name: string
   sort_order: number
   prefix: string | null
+  extra_text: string | null
   items: GroupItem[]
 }
 
@@ -138,6 +139,9 @@ export default function PostPage() {
       const displayName = trimPrefix(item.product_name, group.prefix)
       text += `- ${displayName} ว่าง ${item.custom_qty}\n`
     })
+    if (group.extra_text?.trim()) {
+      text += `${group.extra_text.trim()}\n`
+    }
     return text.trim()
   }
 
@@ -176,10 +180,11 @@ export default function PostPage() {
     fetchData()
   }
 
-  async function handleSaveGroupInfo(group: PostGroup, newName: string, newPrefix: string) {
+  async function handleSaveGroupInfo(group: PostGroup, newName: string, newPrefix: string, newExtraText: string) {
     await supabase.from('post_groups').update({
       name: newName.trim() || group.name,
       prefix: newPrefix.trim() || null,
+      extra_text: newExtraText.trim() || null,
     }).eq('id', group.id)
     fetchData()
   }
@@ -478,10 +483,18 @@ export default function PostPage() {
                   placeholder="เช่น VF+core , Pramy" />
                 <p className="text-xs text-gray-400 mt-1 px-1">ชื่อสินค้าจะตัดคำนี้ออกตอนแสดงผลค่ะ</p>
               </div>
+              <div>
+                <label className="text-xs text-gray-500">ข้อความเพิ่มเติม (ต่อท้ายโพส)</label>
+                <textarea defaultValue={editingGroup.extra_text || ''} id="groupExtraTextInput"
+                  rows={3}
+                  className="w-full bg-white rounded-2xl px-4 py-3 text-sm mt-1 outline-none shadow-sm resize-none"
+                  placeholder="เช่น แมวอายุ 2 เดือน+ หมดอายุ ปี 24-28" />
+              </div>
               <button onClick={() => {
                 const nameInput = document.getElementById('groupNameInput') as HTMLInputElement
                 const prefixInput = document.getElementById('groupPrefixInput') as HTMLInputElement
-                handleSaveGroupInfo(editingGroup, nameInput?.value || editingGroup.name, prefixInput?.value || '')
+                const extraTextInput = document.getElementById('groupExtraTextInput') as HTMLTextAreaElement
+                handleSaveGroupInfo(editingGroup, nameInput?.value || editingGroup.name, prefixInput?.value || '', extraTextInput?.value || '')
               }} className="w-full bg-gradient-to-r from-orange-400 to-rose-400 text-white font-bold py-3 rounded-2xl text-sm">
                 💾 บันทึกชื่อ/คำนำหน้า
               </button>
