@@ -71,23 +71,21 @@ export default function ParcelsPage() {
 
   async function fetchData() {
     setLoading(true)
-    const { data: receiptData } = await supabase.from('stock_receipts').select('*').order('created_at', { ascending: false })
-    if (!receiptData) { setLoading(false); return }
-    const receiptIds = receiptData.map(r => r.id)
-    const [{ data: items }, { data: plats }, { data: ops }, { data: cpns }, { data: prods }] = await Promise.all([
-      supabase.from('stock_receipt_items').select('*, products(id, name, unit, image_url)').in('receipt_id', receiptIds),
+    const [{ data: receiptData }, { data: plats }, { data: ops }, { data: cpns }, { data: prods }] = await Promise.all([
+      supabase.from('stock_receipts').select('*, stock_receipt_items(*, products(id, name, unit, image_url))').order('created_at', { ascending: false }),
       supabase.from('platforms').select('*'),
       supabase.from('operators').select('*'),
       supabase.from('coupons').select('id, name, discount_value'),
       supabase.from('products').select('id, name, code, unit, image_url').eq('is_active', true),
     ])
+    if (!receiptData) { setLoading(false); return }
     setPlatforms(plats || []); setOperators(ops || []); setCoupons(cpns || []); setAllProducts(prods || [])
     const combined = receiptData.map(r => ({
       ...r,
       platforms: plats?.find(p => p.id === r.platform_id) || null,
       operators: ops?.find(o => o.id === r.operator_id) || null,
       coupons: cpns?.find(c => c.id === r.coupon_id) || null,
-      stock_receipt_items: (items || []).filter(i => i.receipt_id === r.id),
+      stock_receipt_items: r.stock_receipt_items || [],
     }))
     setReceipts(combined as any); setLoading(false)
   }
